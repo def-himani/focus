@@ -32,6 +32,12 @@ Start with General Study and the default 40-minute focus and 5-minute break, or 
 
 Repeat, auto-start break, and auto-start next focus control transitions independently. Turn off repeat for a single cycle, or turn off both repeat and automatic breaks for focus only. Keep the app open for automatic transitions. After closing and reopening, resume from the last saved checkpoint. Recent sessions show local start and end times, the original plan, actual focus and pause time, and completion status.
 
+## Stopwatch
+
+Select **Stopwatch** on the Focus screen to log an activity without choosing a duration or a task. Pause excludes time until you resume. A running stopwatch continues from its saved start time across a browser or API restart. Stop and save records the measured intervals immediately under General Activity. You can then choose a to-do, an existing or new activity, or Uncategorized and optionally add notes. History also lets you change the category and notes later.
+
+Use **+30s** and **+1m** while timing, while paused, or on a saved entry. The adjustment history shows when each addition was recorded. The combined total includes manual time. Statistics assigns manual additions to the entry’s start date and shows measured time separately. A stopwatch entry earns no coins and contributes no verified Pomodoro focus or estimated task effort.
+
 ## Attention, subjects, and reports
 
 Choose an existing subject or type an activity name directly on Focus. Session titles, tags, and notes can be edited later in History. To-Dos supports optional effort estimates, completion, and archival. Its progress bar measures verified focus against the estimate.
@@ -47,6 +53,10 @@ A saved focus session earns base credit for its verified effective minutes. At t
 **Just start — 2 min** starts one session for the selected subject. Choose **Continue** to count the starter toward the full target. **Just five more minutes** extends an active countdown near its end. **Back to task** marks a brief re-entry period within the existing timer. The resume shortcut starts a fresh session using the most recent available subject and session details.
 
 Use **Full screen** for the timer and essential controls. Exit with Escape or the on-screen control. Settings includes timer defaults, palettes, completion and check-in sounds, optional desktop notifications, ticking, and rainfall. Allow sound through a user interaction and grant desktop notification permission if desired. Keep the app open for alerts. The timer, reports, purchase flow, and garden use only the local API and bundled assets after setup.
+
+### Timer alerts
+
+In Settings or the Focus sound panel, choose spoken reminders at 10, 5, or 1 minute, session and break announcements, and an optional three-beep count-in before manual starts. The count-in can be canceled. Audio and voice have individual volume controls, including mute at 0%. Use **Test sound** and **Test voice** in your Mac browser. Speech requires a local system voice exposed by the browser. Keep the browser open, the device awake, and system audio enabled for audible alerts.
 
 ## Database
 

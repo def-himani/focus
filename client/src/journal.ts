@@ -36,6 +36,8 @@ export type Session = {
   extensionSeconds: number
   targetSeconds: number
   plannedSeconds: number
+  adjustments: { id: string; seconds: number; recordedAt: number }[]
+  measuredMs: number
   effectiveMs: number
   pausedMs: number
   offMs: number
@@ -70,6 +72,16 @@ export function localDate(ms: number) {
     String(d.getMonth() + 1).padStart(2, '0'),
     String(d.getDate()).padStart(2, '0'),
   ].join('-')
+}
+export function timeRange(start: number, end: number | null) {
+  const clock = (ms: number) =>
+    new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  if (end === null) return clock(start) + ' – ongoing'
+  const date = localDate(start) !== localDate(end) ? new Date(end).toLocaleDateString() + ' ' : ''
+  return clock(start) + ' – ' + date + clock(end)
+}
+export function addedSeconds(entry: Session) {
+  return entry.adjustments.reduce((total, adjustment) => total + adjustment.seconds, 0)
 }
 export function calendarBounds(date: string): [number, number] {
   const start = new Date(date + 'T00:00:00')

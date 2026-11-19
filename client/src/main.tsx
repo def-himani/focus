@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
+import { StopwatchPanel } from './Stopwatch'
 import { Garden } from './Garden'
 import { TimerSettings, SoundSettings } from './Settings'
-import { duration, useTimer, type Preferences } from './timer'
+import { duration, useTimer, type Preferences, type CommandData } from './timer'
 import './style.css'
 
+import { useCountIn } from './useCountIn'
 import { useAudio } from './audio'
 import { AttentionPanel } from './AttentionPanel'
 import { Effort, Subjects, SubjectPicker } from './Subjects'
@@ -44,10 +46,17 @@ function Focus() {
       window.removeEventListener('focus', refresh)
     }
   }, [refresh])
-  useAudio(timer, event)
+  const sounds = useAudio(timer, event)
+  const countIn = useCountIn(timer?.revision)
+  function timerAction(action: string, data?: CommandData) {
+    if (timer?.preferences.playback.preStart && (action === 'start' || action === 'quick')) {
+      const revision = timer.revision
+      countIn.begin(sounds.beep, () => void update(action, undefined, data, revision))
+    } else void update(action, undefined, data)
+  }
   const [notice, setNotice] = useState('')
   useEffect(() => {
-    if (!event) return
+    if (!event || (!event.completion && !event.coins)) return
     setNotice(
       [
         event.completion && event.completion + ' countdown complete.',
@@ -86,9 +95,18 @@ function Focus() {
     }
     setFullscreen(true)
   }
+  const [watchMode, setWatchMode] = useState(false)
+  const liveWatch = timer?.stopwatch
+  const storedWatch = stored.sessions.find((s) => s.id === liveWatch?.id)
+  const watch =
+    liveWatch && storedWatch && storedWatch.adjustments.length > liveWatch.adjustments.length
+      ? { ...liveWatch, adjustments: storedWatch.adjustments }
+      : liveWatch
+  const showWatch = !!watch || (watchMode && !timer?.active && timer?.mode === 'focus')
   const live = timer?.active
-  const journal = live
-    ? { ...stored, sessions: [live, ...stored.sessions.filter((s) => s.id !== live.id)] }
+  const current = watch ?? live
+  const journal = current
+    ? { ...stored, sessions: [current, ...stored.sessions.filter((s) => s.id !== current.id)] }
     : stored
   const previousId = draft?.subjectId ?? timer?.selectedSubjectId
   const unavailable = stored.subjects.some((s) => s.id === previousId && s.state !== 'active')
@@ -120,7 +138,7 @@ function Focus() {
     ? Math.max(0, timer.remainingMs - (running ? Math.max(0, now - timer.received) : 0))
     : 2400000
   const fraction = timer ? remaining / timer.phaseTargetMs : 1
-  const disabled = !timer || busy || error
+  const disabled = !timer || busy || error || !!countIn.step
   const prefs = timer?.preferences
   function configure(changes: Partial<Preferences>) {
     if (prefs) void update('settings', { ...prefs, ...changes })
@@ -134,9 +152,28 @@ function Focus() {
   const soundSettings = prefs && (
     <SoundSettings
       settings={prefs.playback}
+      testSound={sounds.testSound}
+      testVoice={sounds.testVoice}
       disabled={disabled}
       change={(p) => configure({ playback: { ...prefs.playback, ...p } })}
     />
+  )
+  const overlay = (
+    <fieldset className="overlay">
+      <legend>TO DO</legend>
+      <div>
+        {journal.subjects
+          .filter((s) => s.kind === 'todo' && s.state === 'active')
+          .map((s) => (
+            <p key={s.id} title={s.name}>
+              {s.name}
+            </p>
+          ))}
+        {!journal.subjects.some((s) => s.kind === 'todo' && s.state === 'active') && (
+          <small>No outstanding to-dos</small>
+        )}
+      </div>
+    </fieldset>
   )
   return (
     <>
@@ -154,7 +191,14 @@ function Focus() {
       </header>
       <nav aria-label="Views">
         {nav.map((v) => (
-          <button key={v} aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
+          <button
+            key={v}
+            aria-current={view === v ? 'page' : undefined}
+            onClick={() => {
+              countIn.cancel()
+              setView(v)
+            }}
+          >
             {v}
           </button>
         ))}
@@ -212,206 +256,238 @@ function Focus() {
           <>
             <div className="focus-heading">
               <h1 id="timer">Session timer</h1>
-              <fieldset className="overlay">
-                <legend>TO DO</legend>
-                <div>
-                  {journal.subjects
-                    .filter((s) => s.kind === 'todo' && s.state === 'active')
-                    .map((s) => (
-                      <p key={s.id} title={s.name}>
-                        {s.name}
-                      </p>
-                    ))}
-                  {!journal.subjects.some((s) => s.kind === 'todo' && s.state === 'active') && (
-                    <small>No outstanding to-dos</small>
-                  )}
-                </div>
-              </fieldset>
+              {!fullscreen && overlay}
             </div>
-            {!live && <SubjectPicker journal={journal} info={info} change={setDraft} disabled={busy} />}
-            {live && journal.subjects.find((s) => s.id === live.subjectId) && (
-              <Effort
-                journal={journal}
-                subject={journal.subjects.find((s) => s.id === live.subjectId)!}
-              />
-            )}
-            <div className="workspace">
-              <section
-                ref={card}
-                className={'timer-card' + (fullscreen ? ' expanded' : '')}
-                aria-label="Countdown"
+            <div className="chips timer-modes" role="group" aria-label="Timer mode">
+              <button aria-pressed={!showWatch} disabled={!!watch} onClick={() => setWatchMode(false)}>
+                Pomodoro
+              </button>
+              <button
+                aria-pressed={showWatch}
+                disabled={!!countIn.step || !!live || timer?.mode === 'break'}
+                onClick={() => setWatchMode(true)}
               >
-                <div className="card-top">
-                  <span className="subject">
-                    {live?.subject ??
-                      journal.subjects.find((s) => s.id === info.subjectId)?.name ??
-                      (info.activity || 'General Study')}
-                    {live?.title && ' · ' + live.title}
-                  </span>
-                  <button className="expand-button" onClick={() => void toggleFullscreen()}>
-                    {fullscreen ? 'Exit full screen' : 'Full screen'}
-                  </button>
-                  <span className="state">
-                    {blocked
-                      ? live?.interrupted
-                        ? 'Interrupted'
-                        : live?.status
-                      : paused
-                        ? 'Paused'
-                        : running
-                          ? 'Running'
-                          : 'Ready'}
-                  </span>
-                </div>
-                <div
-                  className="dial"
-                  style={{ '--angle': fraction * 360 + 'deg' } as React.CSSProperties}
-                >
-                  <div className="dial-face">
-                    <span className="mode">
-                      {live?.makeupTargetMs ? 'Make-up' : isBreak ? 'Break' : 'Focus'}
-                    </span>
-                    <strong role="timer">{duration(Math.ceil(remaining / 1000))}</strong>
-                  </div>
-                </div>
-                {fullscreen && notice && <p role="status">{notice}</p>}
-                {live &&
-                  timer &&
-                  timer.starterTarget > 120 &&
-                  !live.interrupted &&
-                  ['running', 'paused', 'starter-ended', 'choice'].includes(live.status) && (
-                    <button disabled={disabled} onClick={() => void update('continue')}>
-                      Continue to {duration(timer.starterTarget)} total
-                    </button>
-                  )}
-                {live?.status === 'starter-ended' && (
-                  <button disabled={disabled} onClick={() => void update('finish')}>
-                    Finish starter
-                  </button>
+                Stopwatch
+              </button>
+            </div>
+            {showWatch ? (
+              <StopwatchPanel
+                watch={watch}
+                received={timer?.received ?? 0}
+                journal={journal}
+                disabled={disabled}
+                act={(action) => {
+                  setWatchMode(true)
+                  void update(action)
+                }}
+                refresh={refresh}
+              />
+            ) : (
+              <>
+                {!live && (
+                  <SubjectPicker journal={journal} info={info} change={setDraft} disabled={busy} />
                 )}
-                {!blocked && (
-                  <div className="actions">
-                    <button
-                      className="primary"
-                      disabled={disabled}
-                      onClick={() =>
-                        void update(
-                          running ? 'pause' : paused ? 'resume' : 'start',
-                          undefined,
-                          !active ? { session: info } : undefined,
-                        )
-                      }
-                    >
-                      <span aria-hidden="true">{running ? 'Ⅱ' : '▶'}</span>
-                      {running ? 'Pause' : paused ? 'Resume' : isBreak ? 'Start break' : 'Start focus'}
-                    </button>
-                    {!active && !isBreak && (
-                      <button
-                        disabled={disabled}
-                        onClick={() => void update('quick', undefined, { session: info })}
-                      >
-                        Just start — 2 min
-                      </button>
-                    )}
-                    {running &&
-                      !isBreak &&
-                      !timer?.starterTarget &&
-                      !live?.makeupTargetMs &&
-                      remaining > 0 &&
-                      remaining <= 300000 &&
-                      (timer?.targetSeconds ?? 0) <= 86100 && (
-                        <button disabled={disabled} onClick={() => void update('extend')}>
-                          Just five more minutes
-                        </button>
-                      )}
-                    {running && !!live?.offMs && !isBreak && (
-                      <button
-                        disabled={disabled || !!timer?.refocusMs}
-                        onClick={() => void update('refocus')}
-                      >
-                        {timer?.refocusMs
-                          ? 'Back to task · ' +
-                            duration(
-                              Math.ceil(
-                                Math.max(0, timer.refocusMs - Math.max(0, now - timer.received)) / 1000,
-                              ),
-                            )
-                          : 'Back to task — 2 min'}
-                      </button>
-                    )}
-                    {!active && !isBreak && previousSession && (
-                      <button
-                        disabled={disabled}
-                        onClick={() =>
-                          void update('start', undefined, {
-                            session: {
-                              subjectId: previousSession.subjectId,
-                              title: previousSession.title,
-                              notes: previousSession.notes,
-                              tags: previousSession.tags,
-                            },
-                          })
-                        }
-                      >
-                        Resume {previousSession.subject}
-                      </button>
-                    )}
-                    {active && !isBreak && (
-                      <button disabled={disabled} onClick={() => void update('stop')}>
-                        Stop &amp; save
-                      </button>
-                    )}
-                    {isBreak && (
-                      <button disabled={disabled} onClick={() => void update('skip')}>
-                        Skip break
-                      </button>
-                    )}
-                    {(active || isBreak) && (
-                      <button
-                        disabled={disabled}
-                        onClick={() => {
-                          if (window.confirm('Return to the focus timer? Elapsed time will be saved.'))
-                            void update('reset')
-                        }}
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-                )}
-                {running &&
-                  timer?.nextCoinMs &&
-                  remaining > 0 &&
-                  remaining <= 300000 &&
-                  timer.nextCoinMs <= 300000 && (
-                    <small>
-                      Next base coin after {duration(Math.ceil(timer.nextCoinMs / 1000))} more verified
-                      focus.
-                    </small>
-                  )}
-                {timer && (
-                  <AttentionPanel
-                    key={live?.id}
-                    timer={timer}
-                    disabled={disabled}
-                    act={(action, data) => void update(action, undefined, data)}
+                {live && journal.subjects.find((s) => s.id === live.subjectId) && (
+                  <Effort
+                    journal={journal}
+                    subject={journal.subjects.find((s) => s.id === live.subjectId)!}
                   />
                 )}
-              </section>
-              <div className="focus-preferences">
-                {timerSettings}
-                <details className="panel">
-                  <summary>Sound and appearance</summary>
-                  {soundSettings}
-                </details>
-              </div>
-            </div>
+                <div className="workspace">
+                  <section
+                    ref={card}
+                    className={'timer-card' + (fullscreen ? ' expanded' : '')}
+                    aria-label="Countdown"
+                  >
+                    {fullscreen && overlay}
+                    <div className="card-top">
+                      <span className="subject">
+                        {live?.subject ??
+                          journal.subjects.find((s) => s.id === info.subjectId)?.name ??
+                          (info.activity || 'General Study')}
+                        {live?.title && ' · ' + live.title}
+                      </span>
+                      <button className="expand-button" onClick={() => void toggleFullscreen()}>
+                        {fullscreen ? 'Exit full screen' : 'Full screen'}
+                      </button>
+                      <span className="state">
+                        {blocked
+                          ? live?.interrupted
+                            ? 'Interrupted'
+                            : live?.status
+                          : paused
+                            ? 'Paused'
+                            : running
+                              ? 'Running'
+                              : 'Ready'}
+                      </span>
+                    </div>
+                    <div
+                      className="dial"
+                      style={{ '--angle': fraction * 360 + 'deg' } as React.CSSProperties}
+                    >
+                      <div className="dial-face">
+                        <span className="mode">
+                          {live?.makeupTargetMs ? 'Make-up' : isBreak ? 'Break' : 'Focus'}
+                        </span>
+                        <strong role="timer">{duration(Math.ceil(remaining / 1000))}</strong>
+                      </div>
+                    </div>
+                    {countIn.step > 0 && (
+                      <div role="status">
+                        Starting in {countIn.step} <button onClick={countIn.cancel}>Cancel start</button>
+                      </div>
+                    )}
+                    {fullscreen && notice && <p role="status">{notice}</p>}
+                    {live &&
+                      timer &&
+                      timer.starterTarget > 120 &&
+                      !live.interrupted &&
+                      ['running', 'paused', 'starter-ended', 'choice'].includes(live.status) && (
+                        <button disabled={disabled} onClick={() => void update('continue')}>
+                          Continue to {duration(timer.starterTarget)} total
+                        </button>
+                      )}
+                    {live?.status === 'starter-ended' && (
+                      <button disabled={disabled} onClick={() => void update('finish')}>
+                        Finish starter
+                      </button>
+                    )}
+                    {!blocked && (
+                      <div className="actions">
+                        <button
+                          className="primary"
+                          disabled={disabled}
+                          onClick={() =>
+                            timerAction(
+                              running ? 'pause' : paused ? 'resume' : 'start',
+                              !active ? { session: info } : undefined,
+                            )
+                          }
+                        >
+                          <span aria-hidden="true">{running ? 'Ⅱ' : '▶'}</span>
+                          {running
+                            ? 'Pause'
+                            : paused
+                              ? 'Resume'
+                              : isBreak
+                                ? 'Start break'
+                                : 'Start focus'}
+                        </button>
+                        {!active && !isBreak && (
+                          <button
+                            disabled={disabled}
+                            onClick={() => timerAction('quick', { session: info })}
+                          >
+                            Just start — 2 min
+                          </button>
+                        )}
+                        {running &&
+                          !isBreak &&
+                          !timer?.starterTarget &&
+                          !live?.makeupTargetMs &&
+                          remaining > 0 &&
+                          remaining <= 300000 &&
+                          (timer?.targetSeconds ?? 0) <= 86100 && (
+                            <button disabled={disabled} onClick={() => void update('extend')}>
+                              Just five more minutes
+                            </button>
+                          )}
+                        {running && !!live?.offMs && !isBreak && (
+                          <button
+                            disabled={disabled || !!timer?.refocusMs}
+                            onClick={() => void update('refocus')}
+                          >
+                            {timer?.refocusMs
+                              ? 'Back to task · ' +
+                                duration(
+                                  Math.ceil(
+                                    Math.max(0, timer.refocusMs - Math.max(0, now - timer.received)) /
+                                      1000,
+                                  ),
+                                )
+                              : 'Back to task — 2 min'}
+                          </button>
+                        )}
+                        {!active && !isBreak && previousSession && (
+                          <button
+                            disabled={disabled}
+                            onClick={() =>
+                              timerAction('start', {
+                                session: {
+                                  subjectId: previousSession.subjectId,
+                                  title: previousSession.title,
+                                  notes: previousSession.notes,
+                                  tags: previousSession.tags,
+                                },
+                              })
+                            }
+                          >
+                            Resume {previousSession.subject}
+                          </button>
+                        )}
+                        {active && !isBreak && (
+                          <button disabled={disabled} onClick={() => void update('stop')}>
+                            Stop &amp; save
+                          </button>
+                        )}
+                        {isBreak && (
+                          <button disabled={disabled} onClick={() => void update('skip')}>
+                            Skip break
+                          </button>
+                        )}
+                        {(active || isBreak) && (
+                          <button
+                            disabled={disabled}
+                            onClick={() => {
+                              if (
+                                window.confirm('Return to the focus timer? Elapsed time will be saved.')
+                              )
+                                void update('reset')
+                            }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {running &&
+                      timer?.nextCoinMs &&
+                      remaining > 0 &&
+                      remaining <= 300000 &&
+                      timer.nextCoinMs <= 300000 && (
+                        <small>
+                          Next base coin after {duration(Math.ceil(timer.nextCoinMs / 1000))} more
+                          verified focus.
+                        </small>
+                      )}
+                    {timer && (
+                      <AttentionPanel
+                        key={live?.id}
+                        timer={timer}
+                        disabled={disabled}
+                        act={(action, data) => void update(action, undefined, data)}
+                      />
+                    )}
+                  </section>
+                  <div className="focus-preferences">
+                    {timerSettings}
+                    <details className="panel">
+                      <summary>Sound and appearance</summary>
+                      {soundSettings}
+                    </details>
+                  </div>
+                </div>
+              </>
+            )}
             <section className="history">
               <h2>Recent sessions</h2>
               <SessionTable rows={timer?.history ?? []} days={journal.days} />
             </section>
             <button
-              disabled={Boolean(live?.interrupted) || busy || !journal.days.some((d) => !d.end)}
+              disabled={
+                !!watch || Boolean(live?.interrupted) || busy || !journal.days.some((d) => !d.end)
+              }
               onClick={() => {
                 if (confirm('End this Study Day and save any current session?')) void update('done')
               }}

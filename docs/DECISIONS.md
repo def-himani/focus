@@ -31,3 +31,11 @@
 - The backend reads SecondsPerCoin, MinimumBonusMinutes, and BonusCap from Focus:Rewards. These initial rates are tunable. Old ledger entries retain their recorded amounts. The catalog defines the initial plant prices of 1, 3, 5, and 8 coins. Each debit is also a purchase receipt with a unique client request ID and a unique permanent slot in the garden. The responsive bed renders slots in order.
 - A starter preserves its original 120-second plan. Continuing adds only the difference to the full duration selected at start. Five more minutes explicitly adds 300 seconds to the target. Both choices reuse the session, subject, and intervals; history retains the original plan and shows the extension. The optional return-to-task cue uses the current running time and is bounded by the existing deadline.
 - Audio is synthesized locally. Completion alerts use a foreground app message, a configurable bell, and an optional browser notification. The full-screen control uses the browser API with a viewport fallback. Playback and palette preferences live in SQLite.
+
+## Milestone 8 stopwatch
+
+- Use the existing SQLite timer blocks, interval categories, and transactional revision checks. A stopwatch runs until an explicit pause or stop, including while the app is closed. Only its active spans are measured. Paused gaps remain available for optional personal time entries.
+- Save immediately on stop so leaving the category form cannot lose elapsed time. The default General Activity is resolved as a reusable activity. Clearing the category stores a null subject link.
+- Store manual increments as timestamped, uniquely keyed rows linked to the stopwatch. Attribute manually added totals to the entry’s starting calendar date and Study Day. Only measured intervals occupy the calendar timeline.
+- Check reminder crossings using the persisted remaining-time anchor and a durable per-countdown threshold mask. A new make-up countdown starts with fresh thresholds. Allow five seconds of delivery tolerance, suppress older reminders, and combine simultaneous transition announcements.
+- The count-in applies to explicit starts, including quick starts and previously used subjects. A revision change, navigation away, or a suspended count-in cancels the pending start. Existing auto-start and recovery rules stay in control of automatic transitions.

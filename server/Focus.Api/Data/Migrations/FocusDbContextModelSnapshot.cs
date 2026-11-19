@@ -240,6 +240,28 @@ namespace Focus.Api.Data.Migrations
                     b.ToTable("BlockInterval");
                 });
 
+            modelBuilder.Entity("Focus.Api.Timers.StopwatchAdjustment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("RecordedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Seconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TimerBlockId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TimerBlockId");
+
+                    b.ToTable("StopwatchAdjustment");
+                });
+
             modelBuilder.Entity("Focus.Api.Timers.TimerBlock", b =>
                 {
                     b.Property<int>("Id")
@@ -282,6 +304,9 @@ namespace Focus.Api.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("RefocusUntilMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ReminderMask")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("StartedAt")
@@ -411,6 +436,15 @@ namespace Focus.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Focus.Api.Timers.StopwatchAdjustment", b =>
+                {
+                    b.HasOne("Focus.Api.Timers.TimerBlock", null)
+                        .WithMany("Adjustments")
+                        .HasForeignKey("TimerBlockId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Focus.Api.Timers.TimerBlock", b =>
                 {
                     b.HasOne("Focus.Api.Data.StudyDay", "StudyDay")
@@ -428,6 +462,8 @@ namespace Focus.Api.Data.Migrations
 
             modelBuilder.Entity("Focus.Api.Timers.TimerBlock", b =>
                 {
+                    b.Navigation("Adjustments");
+
                     b.Navigation("Checks");
 
                     b.Navigation("Intervals");

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   calendarBounds,
+  timeRange,
   elapsed,
   localDate,
   save,
@@ -9,6 +10,7 @@ import {
   type Session,
   type SessionInfo,
 } from './journal'
+import { StopwatchHistory } from './Stopwatch'
 import { report } from './accounting'
 import { Effort } from './Subjects'
 
@@ -21,8 +23,8 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
         <thead>
           <tr>
             {[
-              'Started',
-              'Ended',
+              'Local date',
+              'Time range',
               'Study Day',
               'Subject',
               'Session title',
@@ -40,8 +42,10 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
         <tbody>
           {rows.map((s) => (
             <tr key={s.id}>
-              <td>{stamp(s.startedAt)}</td>
-              <td>{s.endedAt ? stamp(s.endedAt) : '—'}</td>
+              <td>{new Date(s.startedAt).toLocaleDateString()}</td>
+              <td title={stamp(s.startedAt) + (s.endedAt ? ' – ' + stamp(s.endedAt) : '')}>
+                {timeRange(s.startedAt, s.endedAt)}
+              </td>
               <td>{days.find((d) => d.id === s.studyDayId)?.label ?? 'Unrecorded'}</td>
               <td>{s.subject}</td>
               <td>{s.title || '—'}</td>
@@ -52,7 +56,9 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
                 {elapsed(s.pausedMs)} ({s.pauseCount})
               </td>
               <td>{elapsed(s.unverifiedMs)}</td>
-              <td>{s.interrupted ? 'Interrupted' : s.status.charAt(0).toUpperCase() + s.status.slice(1)}</td>
+              <td>
+                {s.interrupted ? 'Interrupted' : s.status.charAt(0).toUpperCase() + s.status.slice(1)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -64,6 +70,14 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
 function Details({ s, journal, refresh }: { s: Session; journal: Journal; refresh: () => void }) {
   const [edit, setEdit] = useState<SessionInfo>()
   const [error, setError] = useState('')
+  const segments = s.intervals.flatMap((interval, n) => {
+    const previous = n ? s.intervals[n - 1].end : s.startedAt
+    const gap =
+      previous < interval.start
+        ? [{ start: previous, end: interval.start, category: 'unaccounted' }]
+        : []
+    return [...gap, interval]
+  })
   return (
     <details className="panel">
       <summary>
@@ -82,20 +96,42 @@ function Details({ s, journal, refresh }: { s: Session; journal: Journal; refres
             .reduce((a, i) => a + i.end - i.start, 0),
         )}
       </p>
-      {s.intervals.map((i, n) => (
-        <p key={n}>
-          {stamp(i.start)} – {time(i.end)} · {i.makeup ? 'Make-up · ' : ''}
-          {i.pause ? 'Pause · ' : ''}
-          {i.category} · {elapsed(i.end - i.start)} {i.reason}
-        </p>
-      ))}
-      {s.checks.map((c, n) => (
-        <p key={n}>
-          Check-in {stamp(c.scheduledAt)} ·{' '}
-          {c.answeredAt ? c.answer + ' at ' + stamp(c.answeredAt) : 'Unanswered'} · verified boundary{' '}
-          {time(c.boundary)}
-        </p>
-      ))}
+      <h3>Recorded intervals</h3>
+      <div className="timeline" aria-hidden="true">
+        {segments.map((i, n) => (
+          <i
+            key={n}
+            title={i.category + ' · ' + elapsed(i.end - i.start)}
+            data-kind={i.category}
+            style={{ flexGrow: i.end - i.start }}
+          />
+        ))}
+      </div>
+      <div className="interval-key">
+        {[...new Set(segments.map((i) => i.category))].map((k) => (
+          <span key={k}>
+            <i data-kind={k} /> {k}
+          </span>
+        ))}
+      </div>
+      <details>
+        <summary>Exact times and check-ins</summary>
+        {s.intervals.map((i, n) => (
+          <p key={n}>
+            {stamp(i.start)} – {localDate(i.end) !== localDate(i.start) ? stamp(i.end) : time(i.end)} ·{' '}
+            {i.makeup ? 'Make-up · ' : ''}
+            {i.pause ? 'Pause · ' : ''}
+            {i.category} · {elapsed(i.end - i.start)} {i.reason}
+          </p>
+        ))}
+        {s.checks.map((c, n) => (
+          <p key={n}>
+            Check-in {stamp(c.scheduledAt)} ·{' '}
+            {c.answeredAt ? c.answer + ' at ' + stamp(c.answeredAt) : 'Unanswered'} · verified boundary{' '}
+            {time(c.boundary)}
+          </p>
+        ))}
+      </details>
       {edit ? (
         <form
           className="fields"
@@ -176,7 +212,7 @@ export function History(props: Props) {
   const [start, end] = calendarBounds(date)
   const rows = props.journal.sessions.filter(
     (s) =>
-      s.mode === 'focus' &&
+      ['focus', 'stopwatch'].includes(s.mode) &&
       s.endedAt &&
       (!props.subject || s.subjectId === props.subject) &&
       (!date || (s.startedAt < end && s.endedAt >= start)) &&
@@ -209,11 +245,18 @@ export function History(props: Props) {
           </select>
         </label>
       </div>
-      <SessionTable rows={rows} days={props.journal.days} />
+      <SessionTable rows={rows.filter((s) => s.mode === 'focus')} days={props.journal.days} />
+      <StopwatchHistory
+        entries={rows.filter((s) => s.mode === 'stopwatch')}
+        journal={props.journal}
+        refresh={props.refresh}
+      />
       <h2>Session details</h2>
-      {rows.map((s) => (
-        <Details key={s.id} s={s} journal={props.journal} refresh={props.refresh} />
-      ))}
+      {rows
+        .filter((s) => s.mode === 'focus')
+        .map((s) => (
+          <Details key={s.id} s={s} journal={props.journal} refresh={props.refresh} />
+        ))}
     </>
   )
 }
@@ -297,33 +340,49 @@ function PersonalForm({ refresh }: { refresh: () => void }) {
   )
 }
 function Metrics({ data }: { data: ReturnType<typeof report> }) {
-  const metrics = [
-    ['Planned', data.planned],
-    ['Effective focus', data.totals.focus],
-    ['Off-task', data.totals['off-task']],
-    ['Pause time', data.paused],
-    ['Unverified', data.totals.unverified],
-    ['Scheduled break', data.totals.break],
-    ['Make-up focus', data.makeup],
+  const groups = [
+    [
+      'Pomodoro',
+      [
+        ['Planned', elapsed(data.planned)],
+        ['Effective focus', elapsed(data.totals.focus)],
+        ['Completed / partial', data.completed + ' / ' + data.partial],
+      ],
+    ],
+    [
+      'Attention and breaks',
+      [
+        ['Off-task', elapsed(data.totals['off-task'])],
+        ['Pause time', elapsed(data.paused)],
+        ['Pauses', data.pauses],
+        ['Unverified', elapsed(data.totals.unverified)],
+        ['Scheduled break', elapsed(data.totals.break)],
+        ['Make-up focus', elapsed(data.makeup)],
+      ],
+    ],
+    [
+      'Stopwatch',
+      [
+        ['Stopwatch measured', elapsed(data.totals.stopwatch)],
+        ['Manually added', elapsed(data.manualMs)],
+      ],
+    ],
   ] as const
   return (
-    <div className="metrics">
-      {metrics.map(([label, value]) => (
-        <div key={label}>
-          <small>{label}</small>
-          <strong>{elapsed(value)}</strong>
-        </div>
+    <div className="report-groups">
+      {groups.map(([title, items]) => (
+        <section className="panel" key={title}>
+          <h3>{title}</h3>
+          <dl>
+            {items.map(([name, value]) => (
+              <div key={name}>
+                <dt>{name}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
       ))}
-      <div>
-        <small>Pauses</small>
-        <strong>{data.pauses}</strong>
-      </div>
-      <div>
-        <small>Completed / partial</small>
-        <strong>
-          {data.completed} / {data.partial}
-        </strong>
-      </div>
     </div>
   )
 }
@@ -424,6 +483,7 @@ export function Statistics(props: Props) {
         />
       )}
       <h2>Sessions</h2>
+      <StopwatchHistory entries={data.watches} journal={journal} refresh={props.refresh} />
       <SessionTable rows={data.sessions} days={journal.days} />
       {data.sessions.map((s) => (
         <Details key={s.id} s={s} journal={journal} refresh={props.refresh} />

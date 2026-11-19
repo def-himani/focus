@@ -10,6 +10,13 @@ export type CommandData = {
   blockId?: number
 }
 export type Playback = {
+  preStart: boolean
+  speakTransitions: boolean
+  remindTen: boolean
+  remindFive: boolean
+  remindOne: boolean
+  alertVolume: number
+  voiceVolume: number
   bell: boolean
   notifications: boolean
   ticking: boolean
@@ -30,12 +37,17 @@ export type Preferences = {
 }
 export type Snapshot = {
   nextCoinMs: number | null
+  spoken: string | null
+  freshCompletion: boolean
+  cueAt: number
   completion: string | null
   earnedCoins: number
   starterTarget: number
   refocusMs: number
   targetSeconds: number
+  nextReminderMs: number | null
   nextCheckMs: number | null
+  stopwatch: Session | null
   active: Session | null
   selectedSubjectId: number
   phaseTargetMs: number
@@ -47,6 +59,13 @@ export type Snapshot = {
   remainingMs: number
   preferences: Preferences
   history: Session[]
+}
+export type TimerEvent = {
+  completion: string | null
+  coins: number
+  cueAt: number
+  spoken: string | null
+  freshCompletion: boolean
 }
 type Reading = Snapshot & { received: number }
 
@@ -83,61 +102,70 @@ export function useTimer() {
   const [timer, setTimer] = useState<Reading>()
   const [error, setError] = useState(false)
   const [message, setMessage] = useState('')
-  const [event, setEvent] = useState<{ completion: string | null; coins: number }>()
+  const [event, setEvent] = useState<TimerEvent>()
   const [busy, setBusy] = useState(false)
   const current = useRef<Reading | undefined>(undefined)
   const pending = useRef<Promise<void> | null>(null)
   const mounted = useRef(false)
-  const update = useCallback(async (action: string, preferences?: Preferences, data?: CommandData) => {
-    const expected = current.current?.revision
-    const interactive = !['sync', 'attach', 'observe'].includes(action)
-    if (interactive) {
-      setBusy(true)
-      setMessage('')
-    }
-    // A button click may arrive while a background checkpoint is being written.
-    // Queue it, retaining the revision of the controls the user actually saw.
-    if (pending.current) {
-      if (!interactive) return pending.current
-      await pending.current
-    }
-    async function run() {
-      try {
-        const previous = current.current
-        let next: Snapshot
-        if (!previous) {
-          next = await read()
-          if (action !== 'observe') next = await post('attach', next.revision)
-        } else if (action === 'sync' && previous.status !== 'running') {
-          next = await read()
-        } else {
-          next = await post(action, expected ?? previous.revision, preferences, data)
-        }
-        if (mounted.current) {
-          const state = { ...next, received: performance.now() }
-          if (next.completion || next.earnedCoins)
-            setEvent({ completion: next.completion, coins: next.earnedCoins })
-          current.current = state
-          setTimer(state)
-          setError(false)
-        }
-      } catch (e) {
-        if (e instanceof RangeError) {
-          setMessage(e.message)
-          return
-        }
-        if (mounted.current) {
-          setError(true)
-          current.current = undefined
-        }
-      } finally {
-        pending.current = null
-        if (mounted.current && interactive) setBusy(false)
+  const update = useCallback(
+    async (action: string, preferences?: Preferences, data?: CommandData, startRevision?: number) => {
+      const expected = startRevision ?? current.current?.revision
+      const interactive = !['sync', 'attach', 'observe'].includes(action)
+      if (interactive) {
+        setBusy(true)
+        setMessage('')
       }
-    }
-    pending.current = run()
-    await pending.current
-  }, [])
+      // A button click may arrive while a background checkpoint is being written.
+      // Queue it, retaining the revision of the controls the user actually saw.
+      if (pending.current) {
+        if (!interactive) return pending.current
+        await pending.current
+      }
+      async function run() {
+        try {
+          const previous = current.current
+          let next: Snapshot
+          if (!previous) {
+            next = await read()
+            if (action !== 'observe') next = await post('attach', next.revision)
+          } else if (action === 'sync' && previous.status !== 'running') {
+            next = await read()
+          } else {
+            next = await post(action, expected ?? previous.revision, preferences, data)
+          }
+          if (mounted.current) {
+            const state = { ...next, received: performance.now() }
+            if (next.completion || next.earnedCoins || next.spoken)
+              setEvent({
+                completion: next.completion,
+                coins: next.earnedCoins,
+                spoken: next.spoken,
+                cueAt: next.cueAt,
+                freshCompletion: next.freshCompletion,
+              })
+            current.current = state
+            setTimer(state)
+            setError(false)
+          }
+        } catch (e) {
+          if (e instanceof RangeError) {
+            setMessage(e.message)
+            return
+          }
+          if (mounted.current) {
+            setError(true)
+            current.current = undefined
+          }
+        } finally {
+          pending.current = null
+          if (mounted.current && interactive) setBusy(false)
+        }
+      }
+      pending.current = run()
+      await pending.current
+    },
+    [],
+  )
 
   useEffect(() => {
     mounted.current = true
@@ -169,7 +197,11 @@ export function useTimer() {
         Math.max(
           50,
           timer.received +
-            Math.min(timer.remainingMs, timer.nextCheckMs ?? Infinity) -
+            Math.min(
+              timer.remainingMs,
+              timer.nextCheckMs ?? Infinity,
+              timer.nextReminderMs ?? Infinity,
+            ) -
             performance.now(),
         ),
       )
