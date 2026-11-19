@@ -30,6 +30,14 @@ Start with General Study and the default 40-minute focus and 5-minute break, or 
 
 Repeat, auto-start break, and auto-start next focus control transitions independently. Turn off repeat for a single cycle, or turn off both repeat and automatic breaks for focus only. Keep the app open for automatic transitions. After closing and reopening, resume from the last saved checkpoint. Recent sessions show local start and end times, the original plan, actual focus and pause time, and completion status.
 
+## Attention, subjects, and reports
+
+Choose an existing subject or type an activity name directly on Focus. Session titles, tags, and notes can be edited later in History. To-Dos supports optional effort estimates, completion, and archival. Its progress bar measures verified focus against the estimate.
+
+Set a check-in interval to enable attention prompts. The countdown keeps running during a prompt. On expiry, review any unverified running time before continuing. Report distraction during a run or classify an explicit pause. When the original countdown falls short of its effective target, choose make-up or finish. On reopening, the interrupted-session panel offers resume or save partial.
+
+Statistics opens on today's local calendar date. Choose another date, a logical Study Day, or a subject across all dates. Done for the Day saves the current block and closes the logical day. Any remaining unverified time can still be reviewed. Optional personal intervals and daily notes live in Statistics.
+
 ## Database
 
 The server creates `focus.db` and applies pending EF Core migrations on startup. Its default location on macOS is `~/Library/Application Support/Focus/focus.db`. Set `Focus__DataDirectory` to an absolute directory path before starting the server to use a separate database, for example for a demo. Keep personal databases and backups outside the checkout.
@@ -48,6 +56,7 @@ dotnet ef database update --project server/Focus.Api
 ```sh
 dotnet build --configuration Release
 dotnet test --configuration Release --no-build
+npm test --prefix client
 npm run build --prefix client
 ```
 

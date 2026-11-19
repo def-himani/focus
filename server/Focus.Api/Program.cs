@@ -36,6 +36,16 @@ public class Program
             await database.Database.MigrateAsync();
         }
 
+        app.Use(async (context, next) =>
+        {
+            try { await next(); }
+            catch (InputError error)
+            {
+                context.Response.StatusCode = 400;
+                await context.Response.WriteAsJsonAsync(error.Message);
+            }
+        });
+        app.MapJournal();
         app.MapGet("/api/health", async (FocusDbContext database, CancellationToken cancellation) =>
             await database.Database.CanConnectAsync(cancellation)
                 ? Results.Ok(new { status = "healthy" })
