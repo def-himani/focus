@@ -1,0 +1,21 @@
+name: Focus foundation
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: dotnet build --configuration Release
+      - run: dotnet test --configuration Release --no-build
+      - run: npm ci && npm run build
+        working-directory: client

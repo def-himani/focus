@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/server/">
+    <Project Path="server/Focus.Api/Focus.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Focus.Api.Tests/Focus.Api.Tests.csproj" />
+  </Folder>
+</Solution>

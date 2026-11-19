@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+bin/
+obj/
+TestResults/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+.DS_Store
+.vs/
+*.user

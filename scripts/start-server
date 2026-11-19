@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+exec dotnet run --project server/Focus.Api --no-launch-profile -- --urls http://127.0.0.1:5120
