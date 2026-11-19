@@ -548,6 +548,101 @@ public sealed class TimerTests : IDisposable
         Assert.Single(journal!["sessions"]!.AsArray());
     }
 
+    [Fact]
+    public async Task Manual_stopwatch_adjustments_are_idempotent_and_leave_the_measured_ledger_intact()
+    {
+        var start = await Act("watch-start");
+        var id = (int)start["stopwatch"]!["id"]!;
+        var path = $"/api/stopwatch/{id}/adjustments/";
+        var key = Guid.NewGuid();
+        var retry = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PutAsJsonAsync(path + key, new { seconds = 30 })));
+        Assert.All(retry, r => r.EnsureSuccessStatusCode());
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(path + key, new { seconds = 60 })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(path + Guid.NewGuid(), new { seconds = -1 })).StatusCode);
+        clock.Now = clock.Now.AddSeconds(17);
+        await Act("watch-stop");
+        var original = (await client.GetFromJsonAsync<JsonNode>("/api/journal"))!["sessions"]![0]!;
+        clock.Now = clock.Now.AddDays(1);
+        (await client.PutAsJsonAsync(path + Guid.NewGuid(), new { seconds = 60 })).EnsureSuccessStatusCode();
+        Restart();
+        var entry = (await client.GetFromJsonAsync<JsonNode>("/api/journal"))!["sessions"]![0]!;
+        Assert.Equal(90, entry["adjustments"]!.AsArray().Sum(a => (int)a!["seconds"]!));
+        Assert.Equal(clock.Now.ToUnixTimeMilliseconds(), (long)entry["adjustments"]![1]!["recordedAt"]!);
+        foreach (var field in new[] { "startedAt", "endedAt", "intervals", "measuredMs" })
+            Assert.True(JsonNode.DeepEquals(original[field], entry[field]));
+        Assert.Equal(17000, (long)entry["measuredMs"]!);
+        Assert.Equal(0, (long)entry["effectiveMs"]!);
+        Assert.Equal(0, (long)(await Garden())["balance"]!);
+    }
+
+    [Fact]
+    public async Task Spoken_thresholds_are_independent_and_survive_restart_pause_and_extension()
+    {
+        var cues = new Playback(RemindTen: true, RemindFive: true, RemindOne: true);
+        await Act("settings", new(601, 300, false, false, false, Playback: cues));
+        await Act("start");
+        clock.Now = clock.Now.AddSeconds(1);
+        Assert.Equal("10 minutes remaining.", (string?)(await Act("sync"))["spoken"]);
+        await Act("pause");
+        Restart();
+        clock.Now = clock.Now.AddDays(1);
+        await Act("resume");
+        clock.Now = clock.Now.AddMinutes(5);
+        Assert.Equal("5 minutes remaining.", (string?)(await Act("sync"))["spoken"]);
+        await Act("extend");
+        clock.Now = clock.Now.AddMinutes(5);
+        Assert.Null((await Act("sync"))["spoken"]);
+        clock.Now = clock.Now.AddMinutes(4);
+        Assert.Equal("One minute remaining.", (string?)(await Act("sync"))["spoken"]);
+        Assert.Null((await Act("sync"))["spoken"]);
+        await Act("stop");
+        await Act("settings", new(301, 30, false, false, false, Playback: cues with { RemindFive = false }));
+        await Act("start");
+        clock.Now = clock.Now.AddSeconds(1);
+        Assert.Null((await Act("sync"))["spoken"]);
+        clock.Now = clock.Now.AddSeconds(270);
+        Assert.Null((await Act("sync"))["spoken"]);
+        clock.Now = clock.Now.AddMinutes(10);
+        Assert.False((bool)(await Act("sync"))["freshCompletion"]!);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Transition_cues_describe_the_actual_break_state(bool automatic)
+    {
+        await Act("settings", new(1, 1, true, automatic, false, Playback: new(SpeakTransitions: true)));
+        await Act("start");
+        clock.Now = clock.Now.AddSeconds(1);
+        var end = await Act("sync");
+        Assert.Equal(automatic ? "Focus session complete. Break started." : "Focus session complete. Break ready. Press Start break.", (string?)end["spoken"]);
+        if (!automatic) Assert.Equal("Break started.", (string?)(await Act("start"))["spoken"]);
+        clock.Now = clock.Now.AddSeconds(1);
+        Assert.Equal("Break complete.", (string?)(await Act("sync"))["spoken"]);
+    }
+
+    [Fact]
+    public async Task Break_reminders_wait_for_review_and_use_the_actual_break_duration()
+    {
+        var cues = new Playback(SpeakTransitions: true, RemindTen: true, RemindFive: true, RemindOne: true);
+        await Act("settings", new(10, 301, true, true, false, 5, Playback: cues));
+        var started = await Act("start");
+        Assert.Null(started["nextReminderMs"]);
+        clock.Now = clock.Now.AddSeconds(10);
+        var pending = await Act("sync");
+        Assert.Equal("review", (string?)pending["status"]);
+        Assert.Equal("Focus session complete.", (string?)pending["spoken"]);
+        var next = await Command("answer");
+        Assert.Equal("Break started.", (string?)next["spoken"]);
+        Assert.Equal(1000, (long)next["nextReminderMs"]!);
+        clock.Now = clock.Now.AddSeconds(1);
+        var five = await Act("sync");
+        Assert.Equal("5 minutes remaining.", (string?)five["spoken"]);
+        Assert.Equal(240000L, (long)five["nextReminderMs"]!);
+        clock.Now = clock.Now.AddMinutes(4);
+        Assert.Equal("One minute remaining.", (string?)(await Act("sync"))["spoken"]);
+    }
+
     public void Dispose()
     {
         client.Dispose();

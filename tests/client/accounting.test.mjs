@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { report } from '../../client/src/accounting.ts'
-import { blank, calendarBounds, progress } from '../../client/src/journal.ts'
+import { blank, calendarBounds, progress, timeRange } from '../../client/src/journal.ts'
 
 const hour = 3600000
 const subject = { id: 2, kind: 'todo', state: 'active', name: 'Book ABC', estimateMinutes: 900 }
@@ -114,4 +114,35 @@ test('stopwatch time splits at midnight, leaves paused gaps and stays separate f
   assert.equal(next.bySubject.size, 0)
   assert.equal(report(data, start, midnight, 2).watches.length, 1)
   assert.equal(report(data, start, midnight, 3).watches.length, 0)
+})
+
+test('manual additions belong to the entry date, outside the measured timeline and effort totals', () => {
+  const watch = {
+    ...session,
+    mode: 'stopwatch',
+    plannedSeconds: 0,
+    effectiveMs: 0,
+    adjustments: [
+      { seconds: 30, recordedAt: midnight + hour },
+      { seconds: 60, recordedAt: midnight + 2 * hour },
+    ],
+    intervals: [span(midnight - hour, midnight + hour, 'stopwatch')],
+  }
+  const data = { ...journal, sessions: [watch] }
+  const first = report(data, start, midnight)
+  assert.equal(first.manualMs, 90000)
+  assert.equal(first.totals.stopwatch, hour)
+  assert.equal(first.totals.focus, 0)
+  assert.equal(first.totals.unaccounted, midnight - start - hour)
+  assert.equal(report(data, midnight, midnight + 2 * hour).manualMs, 0)
+  assert.equal(progress(subject, [watch]).used, 0)
+})
+
+test('local time ranges include the end date only across midnight', () => {
+  const before = midnight - 300000
+  const after = midnight + 300000
+  const endDate = new Date(after).toLocaleDateString()
+  assert.ok(timeRange(before, after).includes(endDate))
+  assert.ok(!timeRange(after, after + 60000).includes(endDate))
+  assert.ok(timeRange(after, null).endsWith('ongoing'))
 })

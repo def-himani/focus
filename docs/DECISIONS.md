@@ -36,3 +36,6 @@
 
 - Use the existing SQLite timer blocks, interval categories, and transactional revision checks. A stopwatch runs until an explicit pause or stop, including while the app is closed. Only its active spans are measured. Paused gaps remain available for optional personal time entries.
 - Save immediately on stop so leaving the category form cannot lose elapsed time. The default General Activity is resolved as a reusable activity. Clearing the category stores a null subject link.
+- Store manual increments as timestamped, uniquely keyed rows linked to the stopwatch. Attribute manually added totals to the entry’s starting calendar date and Study Day. Only measured intervals occupy the calendar timeline.
+- Check reminder crossings using the persisted remaining-time anchor and a durable per-countdown threshold mask. A new make-up countdown starts with fresh thresholds. Allow five seconds of delivery tolerance, suppress older reminders, and combine simultaneous transition announcements.
+- The count-in applies to explicit starts, including quick starts and previously used subjects. A revision change, navigation away, or a suspended count-in cancels the pending start. Existing auto-start and recovery rules stay in control of automatic transitions.

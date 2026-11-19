@@ -64,10 +64,14 @@ export function TimerSettings({
 
 export function SoundSettings({
   settings,
+  testSound,
+  testVoice,
   change,
   disabled,
 }: {
   settings: Playback
+  testSound: () => Promise<string>
+  testVoice: () => string
   change: (p: Partial<Playback>) => void
   disabled: boolean
 }) {
@@ -103,6 +107,11 @@ export function SoundSettings({
         <div className="switches">
           {(
             [
+              ['preStart', 'Three-second count-in'],
+              ['speakTransitions', 'Announce session and break transitions'],
+              ['remindTen', 'Speak at 10 minutes remaining'],
+              ['remindFive', 'Speak at 5 minutes remaining'],
+              ['remindOne', 'Speak at 1 minute remaining'],
               ['bell', 'Completion bell'],
               ['notifications', 'Desktop notifications'],
               ['ticking', 'Ticking'],
@@ -124,9 +133,10 @@ export function SoundSettings({
             </label>
           ))}
         </div>
-        {(['tickVolume', 'rainVolume'] as const).map((key) => (
+        {(['alertVolume', 'voiceVolume', 'tickVolume', 'rainVolume'] as const).map((key) => (
           <label key={key}>
-            {key === 'tickVolume' ? 'Tick' : 'Rain'} volume{' '}
+            {{ alertVolume: 'Alert', voiceVolume: 'Voice', tickVolume: 'Tick', rainVolume: 'Rain' }[key]}{' '}
+            volume{' '}
             <select value={settings[key]} onChange={(e) => change({ [key]: +e.target.value })}>
               {[...new Set([0, 10, 25, 30, 50, 75, 100, settings[key]])]
                 .sort((a, b) => a - b)
@@ -138,6 +148,13 @@ export function SoundSettings({
             </select>
           </label>
         ))}
+        <div className="chips">
+          <button onClick={async () => setMessage(await testSound())}>Test sound</button>
+          <button onClick={() => setMessage(testVoice())}>Test voice</button>
+        </div>
+        <small>
+          Spoken cues use a local system voice. Keep Focus open and your device awake for alerts.
+        </small>
         {message && <small role="status">{message}</small>}
       </fieldset>
     </aside>

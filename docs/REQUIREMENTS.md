@@ -111,7 +111,15 @@ The Focus screen also offers a count-up stopwatch. Start immediately without a d
 
 On stop, save the entry locally in SQLite and offer General Activity as its default category, separate from General Study. Allow a to-do, an existing or newly named activity, or Uncategorized, with optional notes. History permits later recategorization while preserving the measured intervals. History and Statistics distinguish stopwatch time from planned Pomodoro time, verified focus, task effort progress, and rewards.
 
-The stopwatch must support +30-second and +1-minute manual adjustments with identifiable provenance separate from measured time. These adjustments have no effect on timestamps or focus credit.
+Offer +30-second and +1-minute manual additions while running, paused, and after stopping. Show the measured duration, manual additions, and combined total. Persist each addition with its own identifier and recording time. Preserve the original timestamps and exclude additions from day timelines, Pomodoro focus, task effort and rewards.
+
+### Milestone 8 timer alerts and usability
+
+- Provide independently selectable local spoken cues at 10, 5 and 1 minute remaining during focus and breaks. Emit each eligible threshold at most once per countdown. Skip stale and missed cues.
+- Offer a cancelable three-beep count-in before manually starting a countdown. Begin recording after the count-in. Keep automatic cycles, reviews, and recovery subject to the established timer rules.
+- Offer a distinctive completion chime and optional spoken focus completion, break start or ready, and break completion. Provide separate alert and voice volume controls including mute, Test sound and Test voice. Use local browser audio and an available local system voice. Explain playback limitations.
+- Keep active to-dos visible at the upper right in full-screen Focus. Support searchable subject selection, inline to-do and activity editing, and creation of reusable activities.
+- Show local time ranges with date and Study Day context, including overnight ranges. Group related statistics. Display chronological recorded classifications with exact interval and check-in details accessible for individual sessions in History and subject reports.
 
 ---
 
@@ -458,7 +466,7 @@ Complete each milestone, run its tests, and keep working features stable before 
 5. **History and Statistics:** Date/task/activity views, timeline, Study Day/overnight reports, optional personal-activity accounting.
 6. **Rewards and Garden:** Idempotent coin rewards, capped combo, Done for the Day reset, succulent shop, one automatically arranged garden, local art assets.
 7. **Polish:** Full-screen mode, attention accessibility, bell, optional rain/tick/themes, quick-start/re-entry options, automated browser tests, local backup/restore and safe portfolio/demo setup.
-8. **Stopwatch:** General-purpose time logging within Focus, with distinct reporting and manual adjustments.
+8. **Stopwatch, audio and usability:** General time logging, manual additions, local timer alerts, and reviewed refinements across Focus, To-Dos, History and Statistics.
 
 Milestone ordering is an engineering plan, **not permission to omit later agreed features**. Add a smoke test or acceptance test for each crucial behavior as it is implemented.
 

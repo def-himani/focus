@@ -9,7 +9,7 @@ public record PersonalEdit(Guid Id, long Start, long End, string Label);
 public static class Journal
 {
     public static IQueryable<TimerBlock> Detailed(FocusDbContext db) => db.Blocks
-        .Include(b => b.StudyDay).Include(b => b.Subject).Include(b => b.Intervals).Include(b => b.Checks).AsSplitQuery();
+        .Include(b => b.StudyDay).Include(b => b.Subject).Include(b => b.Intervals).Include(b => b.Checks).Include(b => b.Adjustments).AsSplitQuery();
 
     public static object Row(TimerBlock b) => RowAt(b, b.EndedAt ?? b.LastObservedAt);
 
@@ -26,6 +26,7 @@ public static class Journal
             b.PlannedSeconds,
             b.ExtensionSeconds,
             b.TargetSeconds,
+            adjustments = b.Adjustments.OrderBy(a => a.RecordedAt).ThenBy(a => a.Id).Select(a => new { a.Id, a.Seconds, a.RecordedAt }),
             measuredMs = b.Mode == "stopwatch" ? b.RunningMs(at) : 0,
             subjectId = b.SubjectId ?? (b.Mode == "stopwatch" ? 0 : 1),
             subject = b.Subject?.Name ?? (b.Mode == "stopwatch" ? "Uncategorized" : "General Study"),
@@ -132,6 +133,19 @@ public static class Journal
             if (block == null) return Results.NotFound();
             block.Subject = await Resolve(db, edit, true);
             Describe(block, edit);
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return Results.NoContent();
+        });
+        app.MapPut("/api/stopwatch/{id:int}/adjustments/{key:guid}", async (int id, Guid key, AddStopwatchTime edit, FocusDbContext db, TimeProvider clock) =>
+        {
+            if (key == Guid.Empty || edit.Seconds is not (30 or 60)) throw new InputError("Choose 30 seconds or one minute.");
+            using var tx = await db.Database.BeginTransactionAsync();
+            if (!await db.Blocks.AnyAsync(b => b.Id == id && b.Mode == "stopwatch")) return Results.NotFound();
+            var adjustments = db.Set<StopwatchAdjustment>();
+            var prior = await adjustments.FindAsync(key);
+            if (prior != null) return prior.TimerBlockId == id && prior.Seconds == edit.Seconds ? Results.NoContent() : Results.Conflict();
+            adjustments.Add(new() { Id = key, TimerBlockId = id, Seconds = edit.Seconds, RecordedAt = clock.GetUtcNow().ToUnixTimeMilliseconds() });
             await db.SaveChangesAsync();
             await tx.CommitAsync();
             return Results.NoContent();

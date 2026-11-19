@@ -34,3 +34,14 @@ internal static class Stopwatch
         block.LastObservedAt = now;
     }
 }
+
+
+public class StopwatchAdjustment
+{
+    public Guid Id { get; set; }
+    public int TimerBlockId { get; set; }
+    public int Seconds { get; set; }
+    public long RecordedAt { get; set; }
+}
+
+public record AddStopwatchTime(int Seconds);

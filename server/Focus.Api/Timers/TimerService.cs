@@ -27,6 +27,11 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
         var now = Math.Max(clock.GetUtcNow().ToUnixTimeMilliseconds(), block?.LastObservedAt ?? 0);
         if (block != null && block.StudyDayId == null)
             block.StudyDay = await GetDay(block.StartedAt, cmd.Zone);
+        var original = block;
+        var priorMode = settings.Mode;
+        var playbackSettings = JsonSerializer.Deserialize<Playback>(settings.PlaybackJson) ?? new();
+        string? spoken = null;
+        bool freshCompletion = false;
         string? completion = null;
         var changed = action is not ("sync" or "attach");
         if (action == "settings")
@@ -37,6 +42,7 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
             if (p.Playback is { } playback)
             {
                 if (playback.TickVolume is < 0 or > 100 || playback.RainVolume is < 0 or > 100 ||
+                    playback.AlertVolume is < 0 or > 100 || playback.VoiceVolume is < 0 or > 100 ||
                     playback.Theme is not ("forest" or "slate" or "plum")) throw new InputError("Invalid sound or theme preference.");
                 settings.PlaybackJson = JsonSerializer.Serialize(playback);
             }
@@ -113,6 +119,7 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
         else if (block?.Status == "running" && block.RemainingMs(now) == 0)
         {
             var deadline = block.LastObservedAt + block.RemainingMs(block.LastObservedAt);
+            freshCompletion = now - deadline <= 5000;
             completion = block.MakeupTargetMs > 0 ? "Make-up" : block.Mode == "break" ? "Break" : "Focus";
             block.CloseInterval(deadline);
             block.CountdownEnd ??= deadline;
@@ -134,7 +141,11 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
         }
         else
         {
-            if (block?.Status == "running") changed |= Attention.Schedule(block, now);
+            if (block?.Status == "running")
+            {
+                changed |= Attention.Schedule(block, now);
+                spoken = RemainingCue(block, now, playbackSettings);
+            }
             switch (action)
             {
                 case "settings": case "sync": case "attach": break;
@@ -201,6 +212,7 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
                     break;
                 case "makeup" when block?.Status == "choice":
                     block.StarterTargetSeconds = 0;
+                    block.ReminderMask = 0;
                     block.MakeupTargetMs = block.TargetSeconds * 1000L - Attention.Total(block, "focus", now);
                     block.Status = "running";
                     block.NextCheckRunningMs = block.RunningMs(now) + block.CheckSeconds * 1000L;
@@ -243,9 +255,38 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
         long earnedCoins = 0;
         foreach (var finished in open.Where(b => b.EndedAt.HasValue))
             earnedCoins += await garden.Settle(finished);
-        var result = await Snapshot(settings, block, now, completion, earnedCoins);
+        if (block?.Status != "running" || action is "pause" or "reset" or "done") spoken = null;
+        if (playbackSettings.SpeakTransitions)
+        {
+            var phrases = new List<string>();
+            if (completion != null && freshCompletion) phrases.Add(completion + (completion == "Focus" ? " session complete." : " complete."));
+            if (block?.Mode == "break" && block != original && block.Status == "running") phrases.Add("Break started.");
+            else if (settings.Mode == "break" && block == null && priorMode != "break") phrases.Add("Break ready. Press Start break.");
+            if (phrases.Count > 0) spoken = string.Join(" ", phrases);
+        }
+        var result = await Snapshot(settings, block, now, completion, earnedCoins, spoken, freshCompletion);
         await tx.CommitAsync();
         return result;
+    }
+
+    private static (int Minutes, int Bit, bool Enabled)[] Thresholds(Playback prefs) =>
+        [(10, 1, prefs.RemindTen), (5, 2, prefs.RemindFive), (1, 4, prefs.RemindOne)];
+
+    // One durable bit per threshold. Crossing while disabled or suspended consumes it too.
+    private static string? RemainingCue(TimerBlock block, long now, Playback prefs)
+    {
+        var left = block.RemainingMs(now);
+        var previous = block.RemainingMs(block.LastObservedAt);
+        string? cue = null;
+        foreach (var (minutes, bit, enabled) in Thresholds(prefs))
+        {
+            var threshold = minutes * 60000L;
+            if ((block.ReminderMask & bit) != 0 || previous < threshold || left > threshold) continue;
+            block.ReminderMask |= bit;
+            if (enabled && threshold - left <= 5000 && left > 0)
+                cue = minutes == 1 ? "One minute remaining." : $"{minutes} minutes remaining.";
+        }
+        return cue;
     }
 
     private static long LastIntervalEnd(TimerBlock b) => b.Intervals.Max(i => i.End ?? i.Start);
@@ -335,16 +376,29 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
         return repeat ? await Start(settings, now) : null;
     }
 
-    private async Task<IResult> Snapshot(TimerSettings s, TimerBlock? b, long now, string? completion = null, long earnedCoins = 0)
+    private async Task<IResult> Snapshot(TimerSettings s, TimerBlock? b, long now, string? completion = null, long earnedCoins = 0, string? spoken = null, bool freshCompletion = false)
     {
         var watch = b?.Mode == "stopwatch" ? b : null;
         if (watch != null) b = null;
         var history = await Journal.Detailed(db).AsNoTracking().Where(x => x.Mode == "focus" && x.EndedAt != null)
             .OrderByDescending(x => x.EndedAt).ThenByDescending(x => x.Id).Take(10).ToListAsync();
+        var playback = JsonSerializer.Deserialize<Playback>(s.PlaybackJson) ?? new();
+        long? nextReminderMs = null;
+        if (b?.Status == "running")
+        {
+            var left = b.RemainingMs(now);
+            nextReminderMs = Thresholds(playback)
+                .Where(t => t.Enabled && (b.ReminderMask & t.Bit) == 0 && left >= t.Minutes * 60000L)
+                .Select(t => (long?)(left - t.Minutes * 60000L)).Min();
+        }
         var planned = b?.PlannedSeconds ?? (s.Mode == "focus" ? s.FocusSeconds : s.BreakSeconds);
         return Results.Ok(new
         {
             stopwatch = watch == null ? null : Journal.RowAt(watch, Math.Max(watch.LastObservedAt, now)),
+            cueAt = now,
+            spoken,
+            freshCompletion,
+            nextReminderMs,
             completion,
             earnedCoins,
             nextCoinMs = b?.Mode == "focus" && b.Status == "running" && b.RemainingMs(now) <= 300000
@@ -363,7 +417,7 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
             active = b == null ? null : Journal.RowAt(b, b.Status == "paused" && !b.Interrupted ? now : b.LastObservedAt),
             s.SelectedSubjectId,
             recoveries = await db.Blocks.Where(x => x.Interrupted && x.EndedAt == null).Select(x => new { x.Id, x.Title, x.StartedAt }).ToListAsync(),
-            preferences = new Preferences(s.FocusSeconds, s.BreakSeconds, s.Loop, s.AutoBreak, s.AutoFocus, s.CheckSeconds, s.PromptSound, JsonSerializer.Deserialize<Playback>(s.PlaybackJson)),
+            preferences = new Preferences(s.FocusSeconds, s.BreakSeconds, s.Loop, s.AutoBreak, s.AutoFocus, s.CheckSeconds, s.PromptSound, playback),
             history = history.Select(Journal.Row)
         });
     }

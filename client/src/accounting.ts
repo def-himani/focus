@@ -13,6 +13,7 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     personal: 0,
     unaccounted: 0,
   }
+  let manualMs = 0
   let planned = 0,
     pauses = 0,
     paused = 0,
@@ -33,6 +34,8 @@ export function report(journal: Journal, start: number, end: number, subjectId =
       s.endedAt != null &&
       s.endedAt >= start &&
       (s.endedAt < end || (Boolean(studyDayId) && s.endedAt === end))
+    if (s.mode === 'stopwatch' && startsInside)
+      manualMs += (s.adjustments ?? []).reduce((total, a) => total + a.seconds * 1000, 0)
     let intersects = false
     for (const i of s.intervals) {
       const a = Math.max(start, i.start),
@@ -97,6 +100,7 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     makeup,
     completed,
     partial,
+    manualMs,
     watches,
     bySubject,
     sessions,

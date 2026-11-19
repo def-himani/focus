@@ -175,11 +175,15 @@ test('stopwatch survives reload and saves a recategorizable entry outside verifi
   await button('Stopwatch').click()
   await button('Start stopwatch').click()
   await expect(page.getByRole('timer')).toHaveText('00:01')
+  await button('+30s').click()
+  await expect(page.locator('.manual-adjustments strong')).toHaveText('00:30')
   await page.reload()
   await button('Pause stopwatch').click()
   await expect(button('Pomodoro')).toBeDisabled()
   await button('Resume stopwatch').click()
   await button('Stop and save').click()
+  await button('+1m').click()
+  await expect(page.locator('.manual-adjustments strong')).toHaveText('01:30')
   await expect(page.getByLabel('Category')).toContainText('General Activity')
   await page.getByLabel('Category').selectOption('new')
   await page.getByLabel('New activity name').fill('Walk')
@@ -195,4 +199,121 @@ test('stopwatch survives reload and saves a recategorizable entry outside verifi
   await button('Statistics').click()
   await expect(page.getByText('Stopwatch measured')).toBeVisible()
   expect((await (await request.get('/api/garden')).json()).balance).toBe(wallet.balance)
+})
+
+test('inline editing, reusable activities, keyboard subject search and full-screen overlay', async ({
+  page,
+}) => {
+  const button = (name: string) => page.getByRole('button', { name, exact: true })
+  await page.goto('/')
+  await button('To-Dos').click()
+  await page.getByLabel('To-do title').fill('Review notes')
+  await button('Add to-do').click()
+  const row = page.locator('.subject-row').filter({ hasText: 'Review notes' })
+  await row.getByRole('button', { name: 'Edit', exact: true }).click()
+  const editor = page.getByRole('form', { name: 'Edit Review notes', exact: true })
+  await editor.getByLabel('To-do title').fill('Review field notes')
+  await editor.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.locator('.subject-row').filter({ hasText: 'Review field notes' })).toBeVisible()
+  await page.getByLabel('Activity name').fill('Watercolors')
+  await button('Add activity').click()
+  await expect(page.locator('.subject-row').filter({ hasText: 'Watercolors' })).toBeVisible()
+  await button('Focus').click()
+  const subject = page.getByRole('combobox', { name: 'Subject', exact: true })
+  await subject.fill('waterc')
+  await expect(page.getByRole('option', { name: /Watercolors/ })).toBeVisible()
+  await subject.press('ArrowDown')
+  await subject.press('Enter')
+  await expect(subject).toHaveValue('Watercolors · Activity')
+  await page.setViewportSize({ width: 390, height: 820 })
+  await button('Full screen').click()
+  const overlay = page.locator('.expanded .overlay')
+  await expect(overlay).toContainText('Review field notes')
+  const panel = await overlay.boundingBox(),
+    dial = await page.getByRole('timer').boundingBox()
+  expect(panel!.x).toBeGreaterThan(170)
+  expect(panel!.y + panel!.height).toBeLessThan(dial!.y)
+  await button('Exit full screen').click()
+})
+
+test('three beeps precede measurement, canceled starts are discarded, and voice uses only a local voice', async ({
+  page,
+  request,
+}) => {
+  await configure(request, 2)
+  await page.addInitScript(() => {
+    const html = () => document.documentElement.dataset
+    Object.defineProperty(window, 'speechSynthesis', {
+      value: {
+        getVoices: () => [
+          { localService: false, lang: 'en-US', name: 'Online' },
+          { localService: true, lang: 'en-US', name: 'Local' },
+        ],
+        cancel: () => {},
+        speak: (u: SpeechSynthesisUtterance) => {
+          html().speech = u.text + '/' + u.voice?.name + '/' + u.volume
+        },
+      },
+    })
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+      value: class {
+        constructor(public text: string) {}
+      },
+    })
+    const create = AudioContext.prototype.createOscillator
+    AudioContext.prototype.createOscillator = function () {
+      html().tones = String(Number(html().tones ?? 0) + 1)
+      return create.call(this)
+    }
+  })
+  const button = (name: string) => page.getByRole('button', { name, exact: true })
+  await page.goto('/')
+  await button('Settings').click()
+  for (const name of ['Three-second count-in', 'Announce session and break transitions']) {
+    const toggle = page.getByRole('switch', { name })
+    await toggle.click()
+    await expect(toggle).toBeChecked()
+  }
+  await page.getByLabel('Voice volume').selectOption('50')
+  await expect(page.getByLabel('Voice volume')).toHaveValue('50')
+  await button('Test voice').click()
+  await expect(page.locator('html')).toHaveAttribute('data-speech', 'Focus voice test./Local/0.5')
+  await page.getByLabel('Alert volume').selectOption('0')
+  await expect(page.getByLabel('Alert volume')).toHaveValue('0')
+  await button('Test sound').click()
+  await expect(page.getByText('Alert volume is muted.')).toBeVisible()
+  await page.getByLabel('Alert volume').selectOption('75')
+  await expect(page.getByLabel('Alert volume')).toHaveValue('75')
+  await button('Focus').click()
+  await button('Start focus').click()
+  await button('Cancel start').click()
+  expect((await (await request.get('/api/timer')).json()).active).toBeNull()
+  const count = Number(await page.locator('html').getAttribute('data-tones'))
+  await button('Start focus').click()
+  await expect(page.getByText('Starting in 1')).toBeVisible()
+  expect((await (await request.get('/api/timer')).json()).active).toBeNull()
+  expect(Number(await page.locator('html').getAttribute('data-tones'))).toBe(count + 3)
+  await expect(button('Pause')).toBeVisible()
+  await expect(page.locator('html')).toHaveAttribute('data-speech', 'Focus session complete./Local/0.5')
+  const last = (await (await request.get('/api/timer')).json()).history[0]
+  expect(last.effectiveMs).toBe(2000)
+})
+
+test('sound settings handle missing local speech and notifications', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', { value: undefined })
+    Reflect.deleteProperty(window, 'Notification')
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Test voice' }).click()
+  await expect(page.getByText('No local system voice is available in this browser.')).toBeVisible()
+  const notifications = page.getByRole('switch', { name: 'Desktop notifications' })
+  if (await notifications.isChecked()) {
+    await notifications.click()
+    await expect(notifications).not.toBeChecked()
+  }
+  await notifications.click()
+  await expect(page.getByText('Desktop notifications require permission in your browser.')).toBeVisible()
+  await expect(notifications).not.toBeChecked()
 })

@@ -29,6 +29,8 @@ public class TimerBlock
     public long LastObservedAt { get; set; }
     public List<BlockInterval> Intervals { get; set; } = [];
 
+    public int ReminderMask { get; set; }
+    public List<StopwatchAdjustment> Adjustments { get; set; } = [];
     public List<AttentionCheck> Checks { get; set; } = [];
     public int CheckSeconds { get; set; }
     public long VerifiedThrough { get; set; }
@@ -85,7 +87,9 @@ public class BlockInterval
 }
 
 public record Playback(bool Bell = true, bool Notifications = false, bool Ticking = false,
-    bool Rain = false, int TickVolume = 25, int RainVolume = 30, string Theme = "forest");
+    bool Rain = false, int TickVolume = 25, int RainVolume = 30, string Theme = "forest",
+    bool PreStart = false, bool SpeakTransitions = false, bool RemindTen = false, bool RemindFive = false,
+    bool RemindOne = false, int AlertVolume = 75, int VoiceVolume = 75);
 
 public record Preferences(int FocusSeconds, int BreakSeconds, bool Loop, bool AutoBreak, bool AutoFocus, int CheckSeconds = 0, bool PromptSound = false, Playback? Playback = null);
 public record TimerCommand(long Revision, Preferences? Preferences = null,
