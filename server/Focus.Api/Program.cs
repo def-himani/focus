@@ -1,4 +1,5 @@
 using Focus.Api.Data;
+using Focus.Api.Timers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -26,6 +27,8 @@ public class Program
             options.UseSqlite(connection.ToString());
         });
 
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddScoped<TimerService>();
         var app = builder.Build();
         using (var scope = app.Services.CreateScope())
         {
@@ -38,6 +41,9 @@ public class Program
                 ? Results.Ok(new { status = "healthy" })
                 : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
 
+        app.MapGet("/api/timer", (TimerService timer) => timer.Read());
+        app.MapPost("/api/timer/{action}", (string action, TimerCommand command, TimerService timer) =>
+            timer.Apply(action, command));
         await app.RunAsync();
     }
 }
