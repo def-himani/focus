@@ -74,3 +74,46 @@ body:has(.overlay) .connection { margin-right: min(22vw,280px); }
 .timeline-list { max-height:300px; overflow:auto; font-size:14px; } .timeline-list b { display:inline-block;width:9px;height:9px;margin-right:8px; }
 [role="alert"] { color:#ffc5ac; padding:8px; }
 @media(max-width:760px){.overlay { position:sticky; top:0; width:44%; } body:has(.overlay) .connection {margin:0;} .fields input, .fields select { min-width:0; } }
+:root { --surface:#1b211d; --dial:#202820; --glow:#303e32; --bg:#111514; }
+:root[data-theme="slate"] { --accent:#abd9ee; --line:#394956; --surface:#1d2631; --dial:#21303a; --glow:#324956; --bg:#111820; }
+:root[data-theme="plum"] { --accent:#efb7d9; --line:#4e3947; --surface:#291f29; --dial:#332533; --glow:#473547; --bg:#1b151d; }
+body { background:var(--bg); }
+aside,.panel,.session-info { background:var(--surface); }
+.timer-card { background:radial-gradient(ellipse at center,var(--glow),var(--surface) 75%); }
+.dial-face { background:var(--dial); }
+nav [aria-current="page"] { background:var(--surface); box-shadow: inset 0 -2px var(--accent); }
+.expand-button { margin-left:auto; margin-right:12px; font-size:12px; }
+.timer-card.expanded,.timer-card:fullscreen { position:fixed; inset:0; z-index:10; border:0; border-radius:0; overflow:auto;
+  justify-content:safe center; gap:clamp(10px,2vh,22px); width:100%; height:100dvh; }
+.expanded .card-top,.expanded .attention { width:min(650px,100%); }
+.expanded .dial { width:min(54vh,80vw); }
+.expanded .dial strong { font-size:clamp(48px,10vmin,115px); }
+.completion-notice,.wallet { border:1px solid var(--line); border-radius:12px; padding:10px 16px; background:var(--surface); }
+.completion-notice { margin-bottom:16px; color:var(--accent); }
+.garden-heading,.shop-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.garden-heading { margin-bottom:18px; } .garden-heading h1 { margin:0; }
+.wallet i { color:#f5ce82; } .wallet { font-variant-numeric:tabular-nums; }
+.conservatory { position:relative; isolation:isolate; display:grid; min-height:290px; max-height:55vh; overflow:auto; align-items:end;
+  border:1px solid #526351; border-radius:22px; background:linear-gradient(160deg,#34493f,#263c39 55%,#172d28); }
+.garden-sky { position:absolute; inset:0; overflow:hidden; z-index:-1; pointer-events:none;
+  background:radial-gradient(circle at 75% 21%,#f1d995 0 16px,#f4ce8926 17px,transparent 18%),
+  repeating-linear-gradient(115deg,transparent 0 95px,#b5d0bb0b 97px 99px); }
+.garden-sky i,.garden-sky b { position:absolute; width:90%; height:70%; bottom:-35%; left:-14%; border-radius:50%; background:linear-gradient(#667a57,#364f39); transform:rotate(7deg); }
+.garden-sky b { left:45%; height:95%; bottom:-58%; background:linear-gradient(#8b946d,#586948); transform:rotate(-12deg); }
+.plant-bed { position:relative; display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); align-items:end; gap:12px; padding:26px; }
+.plant-art { display:inline-grid; place-items:center; position:relative; width:105px; height:108px; }
+.plant-art img { width:90%; height:90%; object-fit:contain; filter:drop-shadow(0 5px 5px #15271c50); }
+.plant-art .cactus-flower { position:absolute; width:32%; height:32%; left:41%; top:0; }
+.planted { display:grid; justify-items:center; background:radial-gradient(ellipse at 50% 92%,#1b311d85,transparent 45%); }
+.planted .plant-art { width:min(100%,100px); }
+.empty-bed { align-self:center; justify-self:center; position:absolute; padding:8px 16px; border-radius:32px; background:#13261db0; color:#e8eee4; }
+.shop-heading { margin:26px 0 12px; } .shop { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr)); gap:14px; }
+.shop article { border:1px solid var(--line); border-radius:16px; padding:18px; display:grid; gap:12px; justify-items:center;
+  background:radial-gradient(ellipse at 50% 20%,var(--glow),var(--surface) 72%); }
+.shop h3 { font-size:16px; font-weight:550; } .shop button { width:100%; }
+@media(max-width:600px){.workspace>* { min-width:0; } .shop { grid-template-columns:1fr 1fr; gap:8px; } .shop article { padding:12px 7px; } .expand-button { margin-right:6px; } .nav { max-width:100%; }}
+
+.focus-preferences { min-width: 0; }
+.focus-preferences > details { margin-top: 1rem; }
+.focus-preferences details aside { padding: .75rem 0 0; border: 0; background: transparent; }
+.focus-preferences details h2 { display: none; }

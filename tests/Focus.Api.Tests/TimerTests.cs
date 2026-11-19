@@ -306,9 +306,15 @@ public sealed class TimerTests : IDisposable
         {
             var db = scope.ServiceProvider.GetRequiredService<FocusDbContext>();
             var start = clock.Now.AddHours(-2).ToUnixTimeMilliseconds();
-            db.Blocks.Add(new TimerBlock { StartedAt = start, PlannedSeconds = 1800,
-                LastObservedAt = start + 2000, SubjectId = 1, StudyDayId = 1,
-                Intervals = [new BlockInterval { Start = start }] });
+            db.Blocks.Add(new TimerBlock
+            {
+                StartedAt = start,
+                PlannedSeconds = 1800,
+                LastObservedAt = start + 2000,
+                SubjectId = 1,
+                StudyDayId = 1,
+                Intervals = [new BlockInterval { Start = start }]
+            });
             await db.SaveChangesAsync();
         }
         var pending = await Act("attach");
@@ -347,6 +353,140 @@ public sealed class TimerTests : IDisposable
         Assert.Equal("choice", (string?)decision["status"]);
         Assert.Equal(50000, (long)decision["active"]!["effectiveMs"]!);
         Assert.Equal(10000, (long)decision["active"]!["offMs"]!);
+    }
+
+    private async Task<JsonNode> Garden() => (await client.GetFromJsonAsync<JsonNode>("/api/garden"))!;
+
+    [Fact]
+    public async Task Rewards_carry_fractional_partials_and_exclude_unverified_and_breaks()
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            await Act("start");
+            clock.Now = clock.Now.AddMinutes(6);
+            await Act("stop");
+        }
+        Assert.Equal(1, (long)(await Garden())["balance"]!);
+        await Act("settings", new(720, 720, false, true, false, 120));
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(12);
+        await Act("sync");
+        Assert.Equal(1, (long)(await Garden())["balance"]!);
+        await Command("answer", 720000);
+        await Act("finish");
+        clock.Now = clock.Now.AddMinutes(12);
+        await Act("sync");
+        Restart();
+        Assert.Equal(1, (long)(await Garden())["balance"]!);
+    }
+
+    [Fact]
+    public async Task Bonuses_cap_across_breaks_and_midnight_then_reset_on_done()
+    {
+        long balance = 0;
+        await Act("settings", new(2160, 60, true, true, true));
+        foreach (var expected in new[] { 3, 4, 4, 5, 5 })
+        {
+            if (balance == 0) await Act("start");
+            clock.Now = clock.Now.AddMinutes(36);
+            var state = await Act("sync");
+            Assert.Equal(expected, (long)state["earnedCoins"]!);
+            balance += expected;
+            clock.Now = clock.Now.AddMinutes(1);
+            await Act("sync");
+        }
+        await Act("done");
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(36);
+        Assert.Equal(3, (long)(await Act("sync"))["earnedCoins"]!);
+        Assert.Equal(balance + 3, (long)(await Garden())["balance"]!);
+    }
+
+    [Fact]
+    public async Task Make_up_settles_once_and_replaying_a_purchase_reuses_its_slot()
+    {
+        await Act("settings", new(720, 300, false, false, false));
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(5);
+        await Command("distraction", 120000);
+        clock.Now = clock.Now.AddMinutes(7);
+        await Act("sync");
+        Assert.Equal(0, (long)(await Garden())["balance"]!);
+        await Act("makeup");
+        clock.Now = clock.Now.AddMinutes(2);
+        Assert.Equal(1, (long)(await Act("sync"))["earnedCoins"]!);
+        var request = new { key = Guid.NewGuid(), plantKey = "cactus" };
+        var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PostAsJsonAsync("/api/garden/purchases", request)));
+        Assert.All(responses, r => r.EnsureSuccessStatusCode());
+        Restart();
+        var garden = await Garden();
+        Assert.Equal(0, (long)garden["balance"]!);
+        Assert.Equal(0, (int)Assert.Single(garden["plants"]!.AsArray())!["slot"]!);
+        var changed = await client.PostAsJsonAsync("/api/garden/purchases", new { request.key, plantKey = "hyacinth" });
+        Assert.Equal(HttpStatusCode.BadRequest, changed.StatusCode);
+        var broke = await client.PostAsJsonAsync("/api/garden/purchases", new { key = Guid.NewGuid(), plantKey = "cactus" });
+        Assert.Equal(HttpStatusCode.BadRequest, broke.StatusCode);
+        Assert.Single((await Garden())["plants"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task Quick_start_continuation_and_extension_preserve_one_original_plan()
+    {
+        await Act("settings", new(720, 300, false, false, false));
+        var started = await Command("quick", info: new(Activity: "Art", Title: "Sketch"));
+        clock.Now = clock.Now.AddMinutes(2);
+        Assert.Equal("starter-ended", (string?)(await Act("sync"))["status"]);
+        clock.Now = clock.Now.AddHours(1);
+        var continued = await Act("continue");
+        Assert.Equal(600000, (long)continued["remainingMs"]!);
+        Assert.Equal((int)started["active"]!["id"]!, (int)continued["active"]!["id"]!);
+        clock.Now = clock.Now.AddMinutes(6);
+        await Act("extend");
+        clock.Now = clock.Now.AddMinutes(9);
+        var row = Assert.Single((await Act("sync"))["history"]!.AsArray())!;
+        Assert.Equal("Art", (string?)row["subject"]);
+        Assert.Equal(120, (int)row["plannedSeconds"]!);
+        Assert.Equal(1020, (int)row["targetSeconds"]!);
+        Assert.Equal(1020000, (long)row["effectiveMs"]!);
+        Assert.Equal(1, (long)(await Garden())["balance"]!);
+    }
+
+    [Fact]
+    public async Task Back_to_task_cue_pauses_with_the_timer_and_never_extends_or_recredits_it()
+    {
+        await Act("settings", new(720, 300, false, false, false));
+        var started = await Act("start");
+        clock.Now = clock.Now.AddMinutes(11);
+        await Command("distraction", 60000);
+        var cue = await Act("refocus");
+        Assert.Equal(60000, (long)cue["refocusMs"]!);
+        Assert.Equal(60000, (long)cue["remainingMs"]!);
+        clock.Now = clock.Now.AddSeconds(30);
+        await Act("pause");
+        clock.Now = clock.Now.AddMinutes(5);
+        var resumed = await Act("resume");
+        Assert.Equal(30000, (long)resumed["refocusMs"]!);
+        clock.Now = clock.Now.AddSeconds(30);
+        Assert.Equal("choice", (string?)(await Act("sync"))["status"]);
+        var row = Assert.Single((await Act("finish"))["history"]!.AsArray())!;
+        Assert.Equal((int)started["active"]!["id"]!, (int)row["id"]!);
+        Assert.Equal(660000, (long)row["effectiveMs"]!);
+        Assert.Equal(60000, (long)row["offMs"]!);
+        Assert.Equal(300000, (long)row["pausedMs"]!);
+        Assert.Equal(0, (long)(await Garden())["balance"]!);
+    }
+
+    [Fact]
+    public async Task Concurrent_different_purchases_cannot_overdraw_the_wallet()
+    {
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(12);
+        await Act("stop");
+        var results = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PostAsJsonAsync("/api/garden/purchases",
+            new { key = Guid.NewGuid(), plantKey = "cactus" })));
+        Assert.Single(results, r => r.IsSuccessStatusCode);
+        Assert.Single(results, r => r.StatusCode == HttpStatusCode.BadRequest);
+        Assert.Single((await Garden())["plants"]!.AsArray());
     }
 
     public void Dispose()

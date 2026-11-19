@@ -61,7 +61,7 @@ export function AttentionPanel({
           {elapsed(s.effectiveMs)} focused · {elapsed(s.offMs)} off-task
         </p>
         <button disabled={disabled} onClick={() => act('makeup')}>
-          Make up {elapsed(s.plannedSeconds * 1000 - s.effectiveMs)}
+          Make up {elapsed(s.targetSeconds * 1000 - s.effectiveMs)}
         </button>
         <button disabled={disabled} onClick={() => act('finish')}>
           Finish session

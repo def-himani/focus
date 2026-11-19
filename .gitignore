@@ -15,3 +15,6 @@ TestResults/
 .DS_Store
 .vs/
 *.user
+
+client/test-results/
+client/playwright-report/

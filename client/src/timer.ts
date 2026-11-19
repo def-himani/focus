@@ -9,7 +9,17 @@ export type CommandData = {
   allOff?: boolean
   blockId?: number
 }
+export type Playback = {
+  bell: boolean
+  notifications: boolean
+  ticking: boolean
+  rain: boolean
+  tickVolume: number
+  rainVolume: number
+  theme: string
+}
 export type Preferences = {
+  playback: Playback
   focusSeconds: number
   breakSeconds: number
   loop: boolean
@@ -19,6 +29,12 @@ export type Preferences = {
   promptSound: boolean
 }
 export type Snapshot = {
+  nextCoinMs: number | null
+  completion: string | null
+  earnedCoins: number
+  starterTarget: number
+  refocusMs: number
+  targetSeconds: number
   nextCheckMs: number | null
   active: Session | null
   selectedSubjectId: number
@@ -26,7 +42,7 @@ export type Snapshot = {
   recoveries: { id: number; title: string; startedAt: number }[]
   revision: number
   mode: 'focus' | 'break'
-  status: 'idle' | 'running' | 'paused' | 'review' | 'choice'
+  status: 'idle' | 'running' | 'paused' | 'review' | 'choice' | 'starter-ended'
   plannedSeconds: number
   remainingMs: number
   preferences: Preferences
@@ -67,6 +83,7 @@ export function useTimer() {
   const [timer, setTimer] = useState<Reading>()
   const [error, setError] = useState(false)
   const [message, setMessage] = useState('')
+  const [event, setEvent] = useState<{ completion: string | null; coins: number }>()
   const [busy, setBusy] = useState(false)
   const current = useRef<Reading | undefined>(undefined)
   const pending = useRef<Promise<void> | null>(null)
@@ -98,6 +115,8 @@ export function useTimer() {
         }
         if (mounted.current) {
           const state = { ...next, received: performance.now() }
+          if (next.completion || next.earnedCoins)
+            setEvent({ completion: next.completion, coins: next.earnedCoins })
           current.current = state
           setTimer(state)
           setError(false)
@@ -164,7 +183,7 @@ export function useTimer() {
     }
   }, [timer, error, update])
 
-  return { timer, busy, error, message, update }
+  return { timer, busy, error, message, update, event }
 }
 
 export function duration(seconds: number) {

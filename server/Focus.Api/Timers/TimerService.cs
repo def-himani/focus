@@ -1,9 +1,11 @@
 using Focus.Api.Data;
+using Focus.Api.Garden;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace Focus.Api.Timers;
 
-public sealed class TimerService(FocusDbContext db, TimeProvider clock)
+public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenService garden)
 {
     private IQueryable<TimerBlock> Open => Journal.Detailed(db).Where(b => b.EndedAt == null)
         .OrderBy(b => b.StartedAt).ThenBy(b => b.Id);
@@ -25,12 +27,19 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
         var now = Math.Max(clock.GetUtcNow().ToUnixTimeMilliseconds(), block?.LastObservedAt ?? 0);
         if (block != null && block.StudyDayId == null)
             block.StudyDay = await GetDay(block.StartedAt, cmd.Zone);
+        string? completion = null;
         var changed = action is not ("sync" or "attach");
         if (action == "settings")
         {
             var p = cmd.Preferences ?? throw new InputError("Missing preferences.");
             if (p.FocusSeconds is < 1 or > 86400 || p.BreakSeconds is < 1 or > 86400 || p.CheckSeconds is < 0 or > 86400)
                 throw new InputError("Choose a duration up to 24 hours.");
+            if (p.Playback is { } playback)
+            {
+                if (playback.TickVolume is < 0 or > 100 || playback.RainVolume is < 0 or > 100 ||
+                    playback.Theme is not ("forest" or "slate" or "plum")) throw new InputError("Invalid sound or theme preference.");
+                settings.PlaybackJson = JsonSerializer.Serialize(playback);
+            }
             settings.PromptSound = p.PromptSound;
             (settings.FocusSeconds, settings.BreakSeconds, settings.Loop, settings.AutoBreak, settings.AutoFocus, settings.CheckSeconds) =
                 (p.FocusSeconds, p.BreakSeconds, p.Loop, p.AutoBreak, p.AutoFocus, p.CheckSeconds);
@@ -46,7 +55,7 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
                 var expiry = block.LastObservedAt + block.RemainingMs(block.LastObservedAt);
                 var at = block.Status switch
                 {
-                    "choice" or "review" => LastIntervalEnd(block),
+                    "choice" or "review" or "starter-ended" => LastIntervalEnd(block),
                     "running" => Math.Min(now, expiry),
                     _ => now
                 };
@@ -85,6 +94,7 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
         else if (block?.Status == "running" && block.RemainingMs(now) == 0)
         {
             var deadline = block.LastObservedAt + block.RemainingMs(block.LastObservedAt);
+            completion = block.MakeupTargetMs > 0 ? "Make-up" : block.Mode == "break" ? "Break" : "Focus";
             block.CloseInterval(deadline);
             block.CountdownEnd ??= deadline;
             Attention.Schedule(block, deadline);
@@ -111,6 +121,30 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
                 case "settings": case "sync": case "attach": break;
                 case "start" when block == null:
                     block = await Start(settings, now, cmd.Session, cmd.Zone);
+                    break;
+                case "quick" when block == null && settings.Mode == "focus":
+                    block = await Start(settings, now, cmd.Session, cmd.Zone);
+                    block.StarterTargetSeconds = Math.Max(120, settings.FocusSeconds);
+                    block.PlannedSeconds = 120;
+                    break;
+                case "continue" when block?.StarterTargetSeconds > 120 && !block.Interrupted &&
+                    block.Status is "running" or "paused" or "starter-ended" or "choice":
+                    block.ExtensionSeconds = block.StarterTargetSeconds - block.PlannedSeconds;
+                    block.StarterTargetSeconds = 0;
+                    if (block.Status is "starter-ended" or "choice")
+                    {
+                        block.CountdownEnd = null;
+                        block.Status = "running";
+                        block.OpenRunning(now);
+                    }
+                    break;
+                case "extend" when block?.Mode == "focus" && block.Status == "running" &&
+                    block.StarterTargetSeconds == 0 && block.MakeupTargetMs == 0 && block.RemainingMs(now) <= 300000 &&
+                    block.TargetSeconds <= 86100:
+                    block.ExtensionSeconds += 300;
+                    break;
+                case "refocus" when block?.Mode == "focus" && block.Status == "running" && Attention.Total(block, "off-task", now) > 0:
+                    block.RefocusUntilMs = block.RunningMs(now) + Math.Min(120000, block.RemainingMs(now));
                     break;
                 case "pause" when block?.Status == "running":
                     block.CloseInterval(now);
@@ -147,12 +181,13 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
                     }
                     break;
                 case "makeup" when block?.Status == "choice":
-                    block.MakeupTargetMs = block.PlannedSeconds * 1000L - Attention.Total(block, "focus", now);
+                    block.StarterTargetSeconds = 0;
+                    block.MakeupTargetMs = block.TargetSeconds * 1000L - Attention.Total(block, "focus", now);
                     block.Status = "running";
                     block.NextCheckRunningMs = block.RunningMs(now) + block.CheckSeconds * 1000L;
                     block.OpenRunning(now);
                     break;
-                case "finish" when block?.Status == "choice":
+                case "finish" when block?.Status is "choice" or "starter-ended":
                     Finish(block, LastIntervalEnd(block), "completed");
                     block = await Advance(settings, now);
                     break;
@@ -183,10 +218,13 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
         }
 
         if (block != null && !block.Interrupted)
-            block.LastObservedAt = block.Status is "review" or "choice" ? LastIntervalEnd(block) : now;
+            block.LastObservedAt = block.Status is "review" or "choice" or "starter-ended" ? LastIntervalEnd(block) : now;
         if (changed) settings.Revision++;
         await db.SaveChangesAsync();
-        var result = await Snapshot(settings, block, now);
+        long earnedCoins = 0;
+        foreach (var finished in open.Where(b => b.EndedAt.HasValue))
+            earnedCoins += await garden.Settle(finished);
+        var result = await Snapshot(settings, block, now, completion, earnedCoins);
         await tx.CommitAsync();
         return result;
     }
@@ -200,9 +238,14 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
             b.Status = "review";
             return b;
         }
-        if (!stop && b.Mode == "focus" && b.MakeupTargetMs == 0 && Attention.Total(b, "focus", now) < b.PlannedSeconds * 1000L)
+        if (!stop && b.Mode == "focus" && b.MakeupTargetMs == 0 && Attention.Total(b, "focus", now) < b.TargetSeconds * 1000L)
         {
             b.Status = "choice";
+            return b;
+        }
+        if (!stop && b.StarterTargetSeconds > 120 && b.MakeupTargetMs == 0)
+        {
+            b.Status = "starter-ended";
             return b;
         }
         Finish(b, LastIntervalEnd(b), "completed");
@@ -273,13 +316,20 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
         return repeat ? await Start(settings, now) : null;
     }
 
-    private async Task<IResult> Snapshot(TimerSettings s, TimerBlock? b, long now)
+    private async Task<IResult> Snapshot(TimerSettings s, TimerBlock? b, long now, string? completion = null, long earnedCoins = 0)
     {
         var history = await Journal.Detailed(db).AsNoTracking().Where(x => x.Mode == "focus" && x.EndedAt != null)
             .OrderByDescending(x => x.EndedAt).ThenByDescending(x => x.Id).Take(10).ToListAsync();
         var planned = b?.PlannedSeconds ?? (s.Mode == "focus" ? s.FocusSeconds : s.BreakSeconds);
         return Results.Ok(new
         {
+            completion,
+            earnedCoins,
+            nextCoinMs = b?.Mode == "focus" && b.Status == "running" && b.RemainingMs(now) <= 300000
+                ? (long?)await garden.UntilNextCoin(Attention.Total(b, "focus", now)) : null,
+            targetSeconds = b?.TargetSeconds ?? planned,
+            starterTarget = b?.StarterTargetSeconds ?? 0,
+            refocusMs = b == null ? 0 : Math.Max(0, b.RefocusUntilMs - b.RunningMs(now)),
             s.Revision,
             s.Mode,
             status = b?.Status ?? "idle",
@@ -287,11 +337,11 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock)
             nextCheckMs = b?.Status == "running" && b.CheckSeconds > 0 && !b.Checks.Any(c => c.AnsweredAt == null)
                 ? (long?)Math.Max(0, b.NextCheckRunningMs - b.RunningMs(now)) : null,
             remainingMs = b?.RemainingMs(now) ?? planned * 1000L,
-            phaseTargetMs = b?.MakeupTargetMs > 0 ? b.MakeupTargetMs : planned * 1000L,
+            phaseTargetMs = b?.MakeupTargetMs > 0 ? b.MakeupTargetMs : (b?.TargetSeconds ?? planned) * 1000L,
             active = b == null ? null : Journal.RowAt(b, b.Status == "paused" && !b.Interrupted ? now : b.LastObservedAt),
             s.SelectedSubjectId,
             recoveries = await db.Blocks.Where(x => x.Interrupted && x.EndedAt == null).Select(x => new { x.Id, x.Title, x.StartedAt }).ToListAsync(),
-            preferences = new Preferences(s.FocusSeconds, s.BreakSeconds, s.Loop, s.AutoBreak, s.AutoFocus, s.CheckSeconds, s.PromptSound),
+            preferences = new Preferences(s.FocusSeconds, s.BreakSeconds, s.Loop, s.AutoBreak, s.AutoFocus, s.CheckSeconds, s.PromptSound, JsonSerializer.Deserialize<Playback>(s.PlaybackJson)),
             history = history.Select(Journal.Row)
         });
     }

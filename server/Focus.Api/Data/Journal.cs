@@ -24,6 +24,8 @@ public static class Journal
             b.LastObservedAt,
             b.Status,
             b.PlannedSeconds,
+            b.ExtensionSeconds,
+            b.TargetSeconds,
             subjectId = b.SubjectId ?? 1,
             subject = b.Subject?.Name ?? "General Study",
             b.StudyDayId,

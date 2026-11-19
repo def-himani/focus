@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/../client"
+# Both the API and the economics used by browser tests are isolated from personal data.
+Focus__DataDirectory=$(mktemp -d "${TMPDIR:-/tmp}/focus-browser.XXXXXXXX")
+export Focus__DataDirectory
+trap 'rm -rf "$Focus__DataDirectory"' EXIT
+export Focus__Rewards__SecondsPerCoin=1
+npm run build
+./node_modules/.bin/playwright test "$@"
