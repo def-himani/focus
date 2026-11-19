@@ -5,164 +5,294 @@ namespace Focus.Api.Timers;
 
 public sealed class TimerService(FocusDbContext db, TimeProvider clock)
 {
-    private Task<TimerBlock?> Active() => db.Blocks.Include(b => b.Intervals)
-        .SingleOrDefaultAsync(b => b.EndedAt == null);
+    private IQueryable<TimerBlock> Open => Journal.Detailed(db).Where(b => b.EndedAt == null)
+        .OrderBy(b => b.StartedAt).ThenBy(b => b.Id);
 
     public async Task<IResult> Read()
     {
-        using var transaction = await db.Database.BeginTransactionAsync();
-        var settings = await db.Settings.SingleAsync();
-        return await Snapshot(settings, await Active(), clock.GetUtcNow().ToUnixTimeMilliseconds());
+        using var tx = await db.Database.BeginTransactionAsync();
+        return await Snapshot(await db.Settings.SingleAsync(), await Open.FirstOrDefaultAsync(), clock.GetUtcNow().ToUnixTimeMilliseconds());
     }
 
-    public async Task<IResult> Apply(string action, TimerCommand request)
+    public async Task<IResult> Apply(string action, TimerCommand cmd)
     {
-        // SQLite's immediate transaction serializes the revision check and every resulting write.
-        using var transaction = await db.Database.BeginTransactionAsync();
+        using var tx = await db.Database.BeginTransactionAsync();
         var settings = await db.Settings.SingleAsync();
-        if (request.Revision != settings.Revision) return Results.Conflict();
-        var block = await Active();
+        if (cmd.Revision != settings.Revision) return Results.Conflict();
+        var open = await Open.ToListAsync();
+        var block = cmd.BlockId is { } id ? open.FirstOrDefault(b => b.Id == id) : open.FirstOrDefault();
+        if (cmd.BlockId.HasValue && block == null) return Results.Conflict();
         var now = Math.Max(clock.GetUtcNow().ToUnixTimeMilliseconds(), block?.LastObservedAt ?? 0);
-        var running = block?.Status == "running";
-        var changed = action is not ("attach" or "sync");
-        if (action is not ("attach" or "sync" or "start" or "resume" or "stop" or "reset" or "pause" or "settings" or "skip"))
-            return Results.BadRequest("Unknown timer action.");
-        if (action == "settings" && (request.Preferences is not {} prefs ||
-            prefs.FocusSeconds is < 1 or > 86400 || prefs.BreakSeconds is < 1 or > 86400))
-            return Results.BadRequest("Choose a duration between one second and 24 hours.");
-        if (action == "settings" && request.Preferences is {} p)
+        if (block != null && block.StudyDayId == null)
+            block.StudyDay = await GetDay(block.StartedAt, cmd.Zone);
+        var changed = action is not ("sync" or "attach");
+        if (action == "settings")
         {
-            settings.FocusSeconds = p.FocusSeconds;
-            settings.BreakSeconds = p.BreakSeconds;
-            settings.Loop = p.Loop;
-            settings.AutoBreak = p.AutoBreak;
-            settings.AutoFocus = p.AutoFocus;
+            var p = cmd.Preferences ?? throw new InputError("Missing preferences.");
+            if (p.FocusSeconds is < 1 or > 86400 || p.BreakSeconds is < 1 or > 86400 || p.CheckSeconds is < 0 or > 86400)
+                throw new InputError("Choose a duration up to 24 hours.");
+            settings.PromptSound = p.PromptSound;
+            (settings.FocusSeconds, settings.BreakSeconds, settings.Loop, settings.AutoBreak, settings.AutoFocus, settings.CheckSeconds) =
+                (p.FocusSeconds, p.BreakSeconds, p.Loop, p.AutoBreak, p.AutoFocus, p.CheckSeconds);
         }
 
-        if (action == "attach" && running)
+        if (action == "done")
         {
-            // A fresh page cannot vouch for time since the last successful observation.
-            block!.CloseInterval(block.LastObservedAt);
-            block.Intervals.Add(new BlockInterval { Kind = "pause", Start = now });
-            block.Status = "paused";
+            if (open.Any(b => b.Interrupted)) throw new InputError("Resolve interrupted sessions first.");
+            var day = db.StudyDays.Local.FirstOrDefault(d => d.End == null) ?? await db.StudyDays.SingleOrDefaultAsync(d => d.End == null);
+            if (day != null) day.End = now;
+            if (block != null)
+            {
+                var expiry = block.LastObservedAt + block.RemainingMs(block.LastObservedAt);
+                var at = block.Status switch
+                {
+                    "choice" or "review" => LastIntervalEnd(block),
+                    "running" => Math.Min(now, expiry),
+                    _ => now
+                };
+                block.CloseInterval(at);
+                if (block.RemainingMs(at) == 0) block.CountdownEnd ??= at;
+                if (Attention.Total(block, "unverified", at) > 0) block.Status = "review";
+                else
+                {
+                    Finish(block, at, block.RemainingMs(at) == 0 ? "completed" : "partial");
+                    block = null;
+                }
+            }
+            settings.Mode = "focus";
+        }
+        else if (action == "attach" && open.Any(b => b.Status == "running"))
+        {
+            foreach (var interrupted in open.Where(b => b.Status == "running"))
+            {
+                var checkpoint = interrupted.LastObservedAt;
+                var deadline = checkpoint + interrupted.RemainingMs(checkpoint);
+                if (interrupted.Checks.Any(c => c.AnsweredAt == null) && now >= deadline)
+                {
+                    interrupted.CloseInterval(deadline);
+                    interrupted.CountdownEnd ??= deadline;
+                    interrupted.Status = "review";
+                }
+                else
+                {
+                    interrupted.CloseInterval(checkpoint);
+                    interrupted.Interrupted = true;
+                    interrupted.Status = "paused";
+                }
+            }
             changed = true;
         }
-        else if (running && block!.RemainingMs(now) == 0)
+        else if (block?.Status == "running" && block.RemainingMs(now) == 0)
         {
             var deadline = block.LastObservedAt + block.RemainingMs(block.LastObservedAt);
-            Finish(block, deadline, "completed");
-            if (action is "stop" or "reset")
+            block.CloseInterval(deadline);
+            block.CountdownEnd ??= deadline;
+            Attention.Schedule(block, deadline);
+            // A click in flight at expiry may concern the session that just ended.
+            // Reclassify its closed ledger before considering an automatic successor.
+            if (action == "distraction" && block.Mode == "focus")
             {
-                block = null;
-                settings.Mode = "focus";
+                block.Status = "review";
+                Attention.Classify(block, cmd, deadline, false);
             }
-            else
+            if (action == "answer" && block.Checks.Any(c => c.AnsweredAt == null))
             {
-                block = Advance(settings, now);
+                block.Status = "review";
+                Attention.Classify(block, cmd, now, true);
             }
+            block = await AfterCountdown(settings, block, now, action is "stop" or "reset");
             changed = true;
         }
         else
         {
+            if (block?.Status == "running") changed |= Attention.Schedule(block, now);
             switch (action)
             {
-                case "attach":
-                case "sync":
-                case "settings":
-                    break;
+                case "settings": case "sync": case "attach": break;
                 case "start" when block == null:
-                    block = Start(settings, now);
+                    block = await Start(settings, now, cmd.Session, cmd.Zone);
                     break;
-                case "pause" when running:
-                    block!.CloseInterval(now);
-                    block.Intervals.Add(new BlockInterval { Kind = "pause", Start = now });
+                case "pause" when block?.Status == "running":
+                    block.CloseInterval(now);
+                    block.Intervals.Add(new BlockInterval { Kind = "pause", Start = now, Makeup = block.MakeupTargetMs > 0 });
                     block.Status = "paused";
                     break;
+                case "classify-pause" when block?.Status == "paused" && !block.Interrupted:
+                    if (cmd.Reason is not ("Off-task" or "Necessary interruption" or "Rest" or "")) throw new InputError("Unknown pause reason.");
+                    var pause = block.Intervals.Single(i => i.End == null);
+                    pause.Reason = cmd.Reason;
+                    pause.Category = cmd.Reason == "Off-task" ? "off-task" : "pause";
+                    break;
                 case "resume" when block?.Status == "paused":
+                    if (open.Count > 1) throw new InputError("Close other interrupted sessions before resuming.");
                     block.CloseInterval(now);
-                    block.Intervals.Add(new BlockInterval { Start = now });
+                    block.Interrupted = false;
+                    block.OpenRunning(now);
                     block.Status = "running";
                     break;
-                case "stop" when block?.Mode == "focus":
-                case "reset" when block != null:
-                    Finish(block, now, "partial");
-                    settings.Mode = "focus";
-                    block = null;
+                case "distraction" when block?.Mode == "focus" && block.Status == "running":
+                    Attention.Classify(block, cmd, now, false);
                     break;
-                case "skip" when settings.Mode == "break":
+                case "answer" when block != null && (block.Status == "review" || block.Checks.Any(c => c.AnsweredAt == null)):
+                    Attention.Classify(block, cmd, now, true);
+                    if (block.Status == "review")
+                    {
+                        if (block.RemainingMs(now) > 0 || block.StudyDay?.End != null)
+                        {
+                            Finish(block, LastIntervalEnd(block), block.RemainingMs(now) == 0 ? "completed" : "partial");
+                            block = null;
+                            settings.Mode = "focus";
+                        }
+                        else block = await AfterCountdown(settings, block, now, false);
+                    }
+                    break;
+                case "makeup" when block?.Status == "choice":
+                    block.MakeupTargetMs = block.PlannedSeconds * 1000L - Attention.Total(block, "focus", now);
+                    block.Status = "running";
+                    block.NextCheckRunningMs = block.RunningMs(now) + block.CheckSeconds * 1000L;
+                    block.OpenRunning(now);
+                    break;
+                case "finish" when block?.Status == "choice":
+                    Finish(block, LastIntervalEnd(block), "completed");
+                    block = await Advance(settings, now);
+                    break;
+                case "close-all" when open.Any(b => b.Interrupted):
+                    foreach (var item in open.Where(b => b.Interrupted)) Finish(item, LastIntervalEnd(item), "partial");
+                    block = open.FirstOrDefault(b => b.EndedAt == null);
+                    settings.Mode = block?.Mode ?? "focus";
+                    break;
+                case "stop" when block?.Mode == "focus" && block.Status is "running" or "paused":
+                case "reset" when block?.Status is "running" or "paused":
+                    if (!block.Interrupted && block.Mode == "focus" && Attention.Total(block, "unverified", now) > 0)
+                    {
+                        block.CloseInterval(now);
+                        block.Status = "review";
+                        break;
+                    }
+                    Finish(block, block.Interrupted ? LastIntervalEnd(block) : now, "partial");
+                    block = open.FirstOrDefault(b => b.EndedAt == null);
+                    settings.Mode = block?.Mode ?? "focus";
+                    break;
+                case "skip" when settings.Mode == "break" && block?.Interrupted != true:
                     if (block != null) Finish(block, now, "partial");
-                    block = Advance(settings, now);
+                    block = await Advance(settings, now);
                     break;
-                case "reset" when settings.Mode == "break":
-                    settings.Mode = "focus";
-                    break;
-                default:
-                    return Results.BadRequest("Action unavailable in the current timer state.");
+                case "reset" when settings.Mode == "break": settings.Mode = "focus"; break;
+                default: throw new InputError("Action unavailable in the current timer state.");
             }
         }
 
-        if (block != null) block.LastObservedAt = now;
-        if (changed)
-            settings.Revision++;
-
+        if (block != null && !block.Interrupted)
+            block.LastObservedAt = block.Status is "review" or "choice" ? LastIntervalEnd(block) : now;
+        if (changed) settings.Revision++;
         await db.SaveChangesAsync();
         var result = await Snapshot(settings, block, now);
-        await transaction.CommitAsync();
+        await tx.CommitAsync();
         return result;
     }
 
-    private TimerBlock Start(TimerSettings settings, long now)
+    private static long LastIntervalEnd(TimerBlock b) => b.Intervals.Max(i => i.End ?? i.Start);
+
+    private async Task<TimerBlock?> AfterCountdown(TimerSettings settings, TimerBlock b, long now, bool stop)
     {
-        var block = new TimerBlock
+        if (b.Mode == "focus" && Attention.Total(b, "unverified", now) > 0)
+        {
+            b.Status = "review";
+            return b;
+        }
+        if (!stop && b.Mode == "focus" && b.MakeupTargetMs == 0 && Attention.Total(b, "focus", now) < b.PlannedSeconds * 1000L)
+        {
+            b.Status = "choice";
+            return b;
+        }
+        Finish(b, LastIntervalEnd(b), "completed");
+        if (!stop) return await Advance(settings, now);
+        settings.Mode = "focus";
+        return null;
+    }
+
+    private async Task<TimerBlock> Start(TimerSettings settings, long now, SessionInfo? info = null, string zone = "UTC")
+    {
+        var day = await GetDay(now, zone);
+        var subject = info != null ? await Journal.Resolve(db, info) : await db.Subjects.FindAsync(settings.SelectedSubjectId);
+        if (subject?.State != "active") subject = await db.Subjects.FindAsync(1);
+        settings.SelectedSubjectId = subject!.Id;
+        var check = settings.Mode == "focus" ? settings.CheckSeconds : 0;
+        var b = new TimerBlock
         {
             Mode = settings.Mode,
             PlannedSeconds = settings.Mode == "focus" ? settings.FocusSeconds : settings.BreakSeconds,
-            StartedAt = now, LastObservedAt = now,
-            Intervals = [new BlockInterval { Start = now }]
+            StartedAt = now,
+            LastObservedAt = now,
+            VerifiedThrough = now,
+            StudyDay = day,
+            Subject = subject,
+            CheckSeconds = check,
+            NextCheckRunningMs = check * 1000L
         };
-        db.Blocks.Add(block);
-        return block;
+        Journal.Describe(b, info ?? new());
+        b.OpenRunning(now);
+        db.Blocks.Add(b);
+        return b;
     }
 
-    private static void Finish(TimerBlock block, long at, string status)
+    private async Task<StudyDay> GetDay(long now, string zone)
     {
-        block.CloseInterval(at);
-        block.EndedAt = at;
-        block.LastObservedAt = at;
-        block.Status = status;
+        var day = db.StudyDays.Local.FirstOrDefault(d => d.End == null) ?? await db.StudyDays.SingleOrDefaultAsync(d => d.End == null);
+        if (day == null)
+        {
+            if (!TimeZoneInfo.TryFindSystemTimeZoneById(zone, out var tz)) throw new InputError("Unknown time zone.");
+            day = new StudyDay
+            {
+                Start = now,
+                Zone = zone,
+                Label = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(now), tz).ToString("yyyy-MM-dd")
+            };
+            db.StudyDays.Add(day);
+        }
+        return day;
     }
 
-    private TimerBlock? Advance(TimerSettings settings, long now)
+    private static void Finish(TimerBlock b, long at, string status)
+    {
+        b.CloseInterval(at);
+        b.EndedAt = at;
+        b.Status = status;
+        b.Interrupted = false;
+    }
+
+    private async Task<TimerBlock?> Advance(TimerSettings settings, long now)
     {
         if (settings.Mode == "focus" && (settings.Loop || settings.AutoBreak))
         {
             settings.Mode = "break";
-            return settings.AutoBreak ? Start(settings, now) : null;
+            return settings.AutoBreak ? await Start(settings, now) : null;
         }
         var repeat = settings.Mode == "break" && settings.Loop && settings.AutoFocus;
         settings.Mode = "focus";
-        return repeat ? Start(settings, now) : null;
+        return repeat ? await Start(settings, now) : null;
     }
 
-    private async Task<IResult> Snapshot(TimerSettings settings, TimerBlock? block, long now)
+    private async Task<IResult> Snapshot(TimerSettings s, TimerBlock? b, long now)
     {
-        var history = await db.Blocks.AsNoTracking().Include(b => b.Intervals)
-            .Where(b => b.Mode == "focus" && b.EndedAt != null)
-            .OrderByDescending(b => b.EndedAt).ThenByDescending(b => b.Id).Take(10).ToListAsync();
-        var planned = block?.PlannedSeconds ??
-            (settings.Mode == "focus" ? settings.FocusSeconds : settings.BreakSeconds);
+        var history = await Journal.Detailed(db).AsNoTracking().Where(x => x.Mode == "focus" && x.EndedAt != null)
+            .OrderByDescending(x => x.EndedAt).ThenByDescending(x => x.Id).Take(10).ToListAsync();
+        var planned = b?.PlannedSeconds ?? (s.Mode == "focus" ? s.FocusSeconds : s.BreakSeconds);
         return Results.Ok(new
         {
-            settings.Revision, settings.Mode, status = block?.Status ?? "idle",
-            plannedSeconds = planned, remainingMs = block?.RemainingMs(now) ?? planned * 1000L,
-            preferences = new Preferences(settings.FocusSeconds, settings.BreakSeconds,
-                settings.Loop, settings.AutoBreak, settings.AutoFocus),
-            history = history.Select(b => new
-            {
-                b.Id, b.StartedAt, b.EndedAt, b.Status, b.PlannedSeconds,
-                effectiveMs = b.RunningMs(b.EndedAt!.Value),
-                pausedMs = b.Intervals.Where(i => i.Kind == "pause").Sum(i => i.Duration(b.EndedAt.Value))
-            })
+            s.Revision,
+            s.Mode,
+            status = b?.Status ?? "idle",
+            plannedSeconds = planned,
+            nextCheckMs = b?.Status == "running" && b.CheckSeconds > 0 && !b.Checks.Any(c => c.AnsweredAt == null)
+                ? (long?)Math.Max(0, b.NextCheckRunningMs - b.RunningMs(now)) : null,
+            remainingMs = b?.RemainingMs(now) ?? planned * 1000L,
+            phaseTargetMs = b?.MakeupTargetMs > 0 ? b.MakeupTargetMs : planned * 1000L,
+            active = b == null ? null : Journal.RowAt(b, b.Status == "paused" && !b.Interrupted ? now : b.LastObservedAt),
+            s.SelectedSubjectId,
+            recoveries = await db.Blocks.Where(x => x.Interrupted && x.EndedAt == null).Select(x => new { x.Id, x.Title, x.StartedAt }).ToListAsync(),
+            preferences = new Preferences(s.FocusSeconds, s.BreakSeconds, s.Loop, s.AutoBreak, s.AutoFocus, s.CheckSeconds, s.PromptSound),
+            history = history.Select(Journal.Row)
         });
     }
 }
