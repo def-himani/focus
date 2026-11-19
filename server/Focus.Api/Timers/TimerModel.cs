@@ -7,6 +7,7 @@ public class TimerSettings
     public int Id { get; set; } = 1;
     public int CheckSeconds { get; set; }
     public bool PromptSound { get; set; }
+    public string PlaybackJson { get; set; } = "{}";
     public int SelectedSubjectId { get; set; } = 1;
     public long Revision { get; set; }
     public string Mode { get; set; } = "focus";
@@ -43,10 +44,15 @@ public class TimerBlock
     public string Notes { get; set; } = "";
     public string Tags { get; set; } = "";
 
+    public int ExtensionSeconds { get; set; }
+    public int StarterTargetSeconds { get; set; }
+    public long RefocusUntilMs { get; set; }
+    public int TargetSeconds => PlannedSeconds + ExtensionSeconds;
+
     public long RunningMs(long now) => Intervals.Where(i => i.Kind == "running").Sum(i => i.Duration(now));
     public long RemainingMs(long now)
     {
-        var target = MakeupTargetMs > 0 ? MakeupTargetMs : PlannedSeconds * 1000L;
+        var target = MakeupTargetMs > 0 ? MakeupTargetMs : TargetSeconds * 1000L;
         var elapsed = Intervals.Where(i => i.Kind == "running" && i.Makeup == (MakeupTargetMs > 0)).Sum(i => i.Duration(now));
         return Math.Max(0, target - elapsed);
     }
@@ -78,7 +84,10 @@ public class BlockInterval
     public long Duration(long now) => Math.Max(0, (End ?? now) - Start);
 }
 
-public record Preferences(int FocusSeconds, int BreakSeconds, bool Loop, bool AutoBreak, bool AutoFocus, int CheckSeconds = 0, bool PromptSound = false);
+public record Playback(bool Bell = true, bool Notifications = false, bool Ticking = false,
+    bool Rain = false, int TickVolume = 25, int RainVolume = 30, string Theme = "forest");
+
+public record Preferences(int FocusSeconds, int BreakSeconds, bool Loop, bool AutoBreak, bool AutoFocus, int CheckSeconds = 0, bool PromptSound = false, Playback? Playback = null);
 public record TimerCommand(long Revision, Preferences? Preferences = null,
     long OffMs = 0, string Reason = "", SessionInfo? Session = null, string Zone = "UTC",
     bool AllOff = false, int? BlockId = null);

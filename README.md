@@ -1,10 +1,12 @@
 # Focus
 
-Focus is a local-first personal Pomodoro and productivity app. The React timer uses a local ASP.NET Core API and SQLite to preserve focus sessions, pauses, breaks, and timer preferences. The [specification](docs/REQUIREMENTS.md) defines the product and milestone order.
+Focus is a local-first personal Pomodoro and productivity app. The React timer uses a local ASP.NET Core API and SQLite to store sessions, pauses, breaks, and preferences alongside the coin ledger and succulent garden. The [specification](docs/REQUIREMENTS.md) defines the product and milestone order.
 
 ## Run locally on macOS
 
-Install the .NET 10 SDK and Node.js 24 LTS (including npm) for your Mac. From the repository root, restore the dependencies once:
+Install the **.NET 10 SDK** and **Node.js 24 LTS** (including npm). Choose Arm64 for Apple silicon or x64 for an Intel Mac. Use the SDK installer and Node.js macOS installer from their official download pages. [Download .NET 10](https://dotnet.microsoft.com/download/dotnet/10.0) · [Download Node.js](https://nodejs.org/en/download)
+
+In Terminal, check that `dotnet --list-sdks` lists a 10.0 SDK and `node --version` reports v24. Clone or open this repository, change into its root directory, and restore dependencies once:
 
 ```sh
 dotnet restore
@@ -38,11 +40,37 @@ Set a check-in interval to enable attention prompts. The countdown keeps running
 
 Statistics opens on today's local calendar date. Choose another date, a logical Study Day, or a subject across all dates. Done for the Day saves the current block and closes the logical day. Any remaining unverified time can still be reviewed. Optional personal intervals and daily notes live in Statistics.
 
+## Garden, quick start, and settings
+
+A saved focus session earns base credit for its verified effective minutes. At the default rate, 12 verified minutes earn one coin. Partial credit carries forward. A capped bonus rewards consecutive qualifying completions within the same Study Day. The Garden shows your spendable balance, progress to the next coin, and shop prices. Buying a plant automatically places it in the bed. The artwork is bundled locally. [Asset sources and license](client/public/plants/SOURCES.md)
+
+**Just start — 2 min** starts one session for the selected subject. Choose **Continue** to count the starter toward the full target. **Just five more minutes** extends an active countdown near its end. **Back to task** marks a brief re-entry period within the existing timer. The resume shortcut starts a fresh session using the most recent available subject and session details.
+
+Use **Full screen** for the timer and essential controls. Exit with Escape or the on-screen control. Settings includes timer defaults, palettes, completion and check-in sounds, optional desktop notifications, ticking, and rainfall. Allow sound through a user interaction and grant desktop notification permission if desired. Keep the app open for alerts. The timer, reports, purchase flow, and garden use only the local API and bundled assets after setup.
+
 ## Database
 
 The server creates `focus.db` and applies pending EF Core migrations on startup. Its default location on macOS is `~/Library/Application Support/Focus/focus.db`. Set `Focus__DataDirectory` to an absolute directory path before starting the server to use a separate database, for example for a demo. Keep personal databases and backups outside the checkout.
 
-To back up, stop the server and copy the entire Focus data directory, including any SQLite companion files, to a private location. To restore, stop the server, move the existing directory aside and copy the saved directory back into place.
+### Back up and restore on macOS
+
+Stop the API with Ctrl-C before copying the folder. Use the same data directory that the API uses. These commands create a private backup directory with a unique name and check the copied SQLite database:
+
+```sh
+umask 077
+focus_data="${Focus__DataDirectory:-$HOME/Library/Application Support/Focus}"
+focus_backup="$(mktemp -d "$HOME/Focus-backup.XXXXXXXX")"
+cp -Rp "$focus_data/." "$focus_backup/"
+sqlite3 "$focus_backup/focus.db" 'PRAGMA quick_check;'
+```
+
+Expect `ok`. Keep the entire backup folder, including any SQLite companion files. To inspect the backup safely, copy it to another private directory and run the API against that copy. To restore it as your primary database, stop the API, move the existing Focus data folder aside in Finder, then duplicate the saved folder at the original path with the original folder name. Restart the API and check History and Garden before removing any old copy.
+
+For a portfolio demo, stop the primary API and launch a separate empty database:
+
+```sh
+Focus__DataDirectory="$(mktemp -d)" ./scripts/start-server
+```
 
 For a future schema change, edit the EF model and run these commands from the repository root:
 
@@ -59,6 +87,15 @@ dotnet test --configuration Release --no-build
 npm test --prefix client
 npm run build --prefix client
 ```
+
+To run the checked-in browser journeys, install Playwright Chromium once and then run:
+
+```sh
+(cd client && npx playwright install chromium)
+npm run test:browser --prefix client
+```
+
+The browser suite serves the production frontend on port 5187 and an isolated API on port 5127. It uses a temporary database and a one-second earning rate to exercise a real purchase. The normal app uses the production rate. To run with an installed Chromium binary, set `FOCUS_TEST_CHROMIUM` to its executable path.
 
 The xUnit integration tests exercise migrations, restart persistence, elapsed-time accuracy, partial saves, cycle settings, and concurrent commands against temporary SQLite files. The client build checks TypeScript and bundles the production assets. GitHub Actions runs these checks on macOS.
 

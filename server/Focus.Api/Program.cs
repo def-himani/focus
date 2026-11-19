@@ -1,4 +1,5 @@
 using Focus.Api.Data;
+using Focus.Api.Garden;
 using Focus.Api.Timers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -29,11 +30,16 @@ public class Program
 
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddScoped<TimerService>();
+        builder.Services.AddScoped<GardenService>();
+        builder.Services.AddOptions<RewardRates>().BindConfiguration("Focus:Rewards")
+            .Validate(r => r.SecondsPerCoin is >= 1 and <= 86400 && r.MinimumBonusMinutes is >= 1 and <= 1440 && r.BonusCap is >= 0 and <= 10)
+            .ValidateOnStart();
         var app = builder.Build();
         using (var scope = app.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<FocusDbContext>();
             await database.Database.MigrateAsync();
+            await scope.ServiceProvider.GetRequiredService<GardenService>().CreditExistingSessions();
         }
 
         app.Use(async (context, next) =>
@@ -46,6 +52,8 @@ public class Program
             }
         });
         app.MapJournal();
+        app.MapGet("/api/garden", (GardenService garden) => garden.Read());
+        app.MapPost("/api/garden/purchases", (Purchase request, GardenService garden) => garden.Buy(request));
         app.MapGet("/api/health", async (FocusDbContext database, CancellationToken cancellation) =>
             await database.Database.CanConnectAsync(cancellation)
                 ? Results.Ok(new { status = "healthy" })

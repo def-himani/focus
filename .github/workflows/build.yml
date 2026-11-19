@@ -19,3 +19,5 @@ jobs:
       - run: dotnet test --configuration Release --no-build
       - run: npm ci && npm test && npm run build
         working-directory: client
+      - run: npx playwright install chromium && npm run test:browser
+        working-directory: client

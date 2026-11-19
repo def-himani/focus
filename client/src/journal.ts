@@ -33,6 +33,8 @@ export type Session = {
   title: string
   notes: string
   tags: string
+  extensionSeconds: number
+  targetSeconds: number
   plannedSeconds: number
   effectiveMs: number
   pausedMs: number

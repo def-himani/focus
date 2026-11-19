@@ -52,7 +52,7 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
                 {elapsed(s.pausedMs)} ({s.pauseCount})
               </td>
               <td>{elapsed(s.unverifiedMs)}</td>
-              <td>{s.interrupted ? 'Interrupted' : s.status}</td>
+              <td>{s.interrupted ? 'Interrupted' : s.status.charAt(0).toUpperCase() + s.status.slice(1)}</td>
             </tr>
           ))}
         </tbody>
@@ -74,7 +74,8 @@ function Details({ s, journal, refresh }: { s: Session; journal: Journal; refres
       </p>
       <p>Study Day · {journal.days.find((d) => d.id === s.studyDayId)?.label ?? 'Unrecorded'}</p>
       <p>
-        Effective target {s.effectiveMs >= s.plannedSeconds * 1000 ? 'met' : 'not met'} · Make-up focus{' '}
+        {s.extensionSeconds > 0 && <>Added by choice · {elapsed(s.extensionSeconds * 1000)} · </>}
+        Effective target {s.effectiveMs >= s.targetSeconds * 1000 ? 'met' : 'not met'} · Make-up focus{' '}
         {elapsed(
           s.intervals
             .filter((i) => i.makeup && i.category === 'focus')

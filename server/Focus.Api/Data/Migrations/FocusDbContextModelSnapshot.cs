@@ -127,6 +127,53 @@ namespace Focus.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Focus.Api.Garden.CoinEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BonusCoins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PlantKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("PurchaseKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("QualifyingCompletion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Slot")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("StudyDayId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TimerBlockId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Units")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("VerifiedMs")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PurchaseKey")
+                        .IsUnique();
+
+                    b.HasIndex("Slot")
+                        .IsUnique();
+
+                    b.HasIndex("TimerBlockId")
+                        .IsUnique();
+
+                    b.ToTable("Coins");
+                });
+
             modelBuilder.Entity("Focus.Api.Timers.AttentionCheck", b =>
                 {
                     b.Property<int>("Id")
@@ -208,6 +255,9 @@ namespace Focus.Api.Data.Migrations
                     b.Property<long?>("EndedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("ExtensionSeconds")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Interrupted")
                         .HasColumnType("INTEGER");
 
@@ -231,7 +281,13 @@ namespace Focus.Api.Data.Migrations
                     b.Property<int>("PlannedSeconds")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("RefocusUntilMs")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("StarterTargetSeconds")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Status")
@@ -294,6 +350,10 @@ namespace Focus.Api.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PlaybackJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("PromptSound")
                         .HasColumnType("INTEGER");
 
@@ -318,10 +378,19 @@ namespace Focus.Api.Data.Migrations
                             FocusSeconds = 2400,
                             Loop = true,
                             Mode = "focus",
+                            PlaybackJson = "{}",
                             PromptSound = false,
                             Revision = 0L,
                             SelectedSubjectId = 1
                         });
+                });
+
+            modelBuilder.Entity("Focus.Api.Garden.CoinEntry", b =>
+                {
+                    b.HasOne("Focus.Api.Timers.TimerBlock", null)
+                        .WithMany()
+                        .HasForeignKey("TimerBlockId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Focus.Api.Timers.AttentionCheck", b =>
