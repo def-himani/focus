@@ -36,6 +36,7 @@ export type Snapshot = {
   refocusMs: number
   targetSeconds: number
   nextCheckMs: number | null
+  stopwatch: Session | null
   active: Session | null
   selectedSubjectId: number
   phaseTargetMs: number

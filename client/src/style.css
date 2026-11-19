@@ -117,3 +117,7 @@ nav [aria-current="page"] { background:var(--surface); box-shadow: inset 0 -2px 
 .focus-preferences > details { margin-top: 1rem; }
 .focus-preferences details aside { padding: .75rem 0 0; border: 0; background: transparent; }
 .focus-preferences details h2 { display: none; }
+
+.timer-modes { margin: 0 0 18px; }
+.timer-modes [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+[data-kind="stopwatch"] { background: #67beb8; }

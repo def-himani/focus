@@ -90,3 +90,28 @@ test('personal, break, unverified and uncovered time partition the calendar', ()
     400,
   )
 })
+
+test('stopwatch time splits at midnight, leaves paused gaps and stays separate from focus totals', () => {
+  const watch = {
+    ...session,
+    mode: 'stopwatch',
+    plannedSeconds: 0,
+    effectiveMs: 0,
+    intervals: [
+      span(midnight - hour, midnight + hour, 'stopwatch'),
+      span(midnight + 1.5 * hour, midnight + 2 * hour, 'stopwatch'),
+    ],
+  }
+  const data = { ...journal, sessions: [watch] }
+  const first = report(data, start, midnight)
+  const next = report(data, midnight, midnight + 2 * hour)
+  assert.equal(first.totals.stopwatch, hour)
+  assert.equal(next.totals.stopwatch, 1.5 * hour)
+  assert.equal(next.totals.unaccounted, hour / 2)
+  assert.equal(next.completed, 0)
+  assert.equal(next.planned, 0)
+  assert.equal(next.totals.focus, 0)
+  assert.equal(next.bySubject.size, 0)
+  assert.equal(report(data, start, midnight, 2).watches.length, 1)
+  assert.equal(report(data, start, midnight, 3).watches.length, 0)
+})

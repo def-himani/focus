@@ -489,6 +489,65 @@ public sealed class TimerTests : IDisposable
         Assert.Single((await Garden())["plants"]!.AsArray());
     }
 
+    [Fact]
+    public async Task Stopwatch_restores_exact_elapsed_and_reclassifies_without_focus_or_rewards()
+    {
+        var start = clock.Now;
+        var watch = (await Act("watch-start"))["stopwatch"]!;
+        var id = (int)watch["id"]!;
+        Assert.Equal("Uncategorized", (string?)watch["subject"]);
+        clock.Now = clock.Now.AddMinutes(20);
+        Restart();
+        Assert.Equal(1200000, (long)(await Act("attach"))["stopwatch"]!["measuredMs"]!);
+        await Act("watch-pause");
+        clock.Now = clock.Now.AddHours(1);
+        Assert.Equal(1200000, (long)(await Act("sync"))["stopwatch"]!["measuredMs"]!);
+        var overlap = await client.PostAsJsonAsync("/api/timer/start", new TimerCommand(revision));
+        Assert.Equal(HttpStatusCode.BadRequest, overlap.StatusCode);
+        await Act("watch-resume");
+        clock.Now = clock.Now.AddSeconds(197).AddMilliseconds(432);
+        var stopped = await Act("watch-stop");
+        Assert.Null(stopped["stopwatch"]);
+        Assert.Empty(stopped["history"]!.AsArray());
+        async Task<JsonNode> Entry()
+        {
+            var journal = await client.GetFromJsonAsync<JsonNode>("/api/journal");
+            return Assert.Single(journal!["sessions"]!.AsArray())!;
+        }
+        var original = await Entry();
+        Assert.Equal("General Activity", (string?)original["subject"]);
+        Assert.Equal(1397432, (long)original["measuredMs"]!);
+        Assert.Equal(start.ToUnixTimeMilliseconds(), (long)original["startedAt"]!);
+        Assert.Equal(clock.Now.ToUnixTimeMilliseconds(), (long)original["endedAt"]!);
+        Assert.Equal(0, (long)original["effectiveMs"]!);
+        Assert.Equal(0, (long)(await Garden())["balance"]!);
+        var blocked = await client.PostAsJsonAsync("/api/personal", new PersonalEdit(Guid.NewGuid(), start.ToUnixTimeMilliseconds(), clock.Now.ToUnixTimeMilliseconds(), "Meal"));
+        Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
+        var todo = await client.PostAsJsonAsync("/api/subjects", new SubjectEdit("Read", "todo", CreationKey: Guid.NewGuid()));
+        todo.EnsureSuccessStatusCode();
+        var todoId = (int)(await todo.Content.ReadFromJsonAsync<JsonNode>())!["id"]!;
+        foreach (var info in new[] { new SessionInfo(SubjectId: todoId), new SessionInfo(Activity: "Drawing", Notes: "Sketch"), new SessionInfo(Notes: "Unlinked") })
+        {
+            (await client.PutAsJsonAsync($"/api/stopwatch/{id}", info)).EnsureSuccessStatusCode();
+            Restart();
+            var edited = await Entry();
+            Assert.Equal(info.SubjectId.HasValue ? "Read" : info.Activity ?? "Uncategorized", (string?)edited["subject"]);
+            Assert.Equal(info.Notes, (string?)edited["notes"]);
+            Assert.True(JsonNode.DeepEquals(original["intervals"], edited["intervals"]));
+        }
+    }
+
+    [Fact]
+    public async Task Stopwatch_and_pomodoro_starts_are_mutually_exclusive_under_concurrency()
+    {
+        var results = await Task.WhenAll(new[] { "watch-start", "quick" }.Select(action =>
+            client.PostAsJsonAsync("/api/timer/" + action, new TimerCommand(revision))));
+        Assert.Single(results, r => r.IsSuccessStatusCode);
+        Assert.Single(results, r => r.StatusCode == HttpStatusCode.Conflict);
+        var journal = await client.GetFromJsonAsync<JsonNode>("/api/journal");
+        Assert.Single(journal!["sessions"]!.AsArray());
+    }
+
     public void Dispose()
     {
         client.Dispose();

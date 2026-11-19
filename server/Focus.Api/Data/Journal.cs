@@ -26,8 +26,9 @@ public static class Journal
             b.PlannedSeconds,
             b.ExtensionSeconds,
             b.TargetSeconds,
-            subjectId = b.SubjectId ?? 1,
-            subject = b.Subject?.Name ?? "General Study",
+            measuredMs = b.Mode == "stopwatch" ? b.RunningMs(at) : 0,
+            subjectId = b.SubjectId ?? (b.Mode == "stopwatch" ? 0 : 1),
+            subject = b.Subject?.Name ?? (b.Mode == "stopwatch" ? "Uncategorized" : "General Study"),
             b.StudyDayId,
             b.Title,
             b.Notes,
@@ -108,13 +109,14 @@ public static class Journal
 
     public static void MapJournal(this WebApplication app)
     {
-        app.MapGet("/api/journal", async (FocusDbContext db) =>
+        app.MapGet("/api/journal", async (FocusDbContext db, TimeProvider clock) =>
         {
             using var tx = await db.Database.BeginTransactionAsync();
             var blocks = await Detailed(db).AsNoTracking().OrderByDescending(b => b.StartedAt).ThenByDescending(b => b.Id).ToListAsync();
             return Results.Ok(new
             {
-                sessions = blocks.Select(Row),
+                sessions = blocks.Select(b => b.Mode == "stopwatch" && b.EndedAt == null
+                    ? RowAt(b, Math.Max(b.LastObservedAt, clock.GetUtcNow().ToUnixTimeMilliseconds())) : Row(b)),
                 subjects = await db.Subjects.OrderBy(s => s.Name).ToListAsync(),
                 days = await db.StudyDays.OrderByDescending(d => d.Start).ToListAsync(),
                 notes = await db.DailyNotes.ToListAsync(),
@@ -130,6 +132,19 @@ public static class Journal
             if (block == null) return Results.NotFound();
             block.Subject = await Resolve(db, edit, true);
             Describe(block, edit);
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return Results.NoContent();
+        });
+        app.MapPut("/api/stopwatch/{id:int}", async (int id, SessionInfo edit, FocusDbContext db) =>
+        {
+            using var tx = await db.Database.BeginTransactionAsync();
+            var block = await db.Blocks.SingleOrDefaultAsync(b => b.Id == id && b.Mode == "stopwatch" && b.EndedAt != null);
+            if (block == null) return Results.NotFound();
+            block.Notes = Text(edit.Notes, 10000);
+            block.Subject = edit.SubjectId != null || !string.IsNullOrWhiteSpace(edit.Activity)
+                ? await Resolve(db, edit, true) : null;
+            if (block.Subject == null) block.SubjectId = null;
             await db.SaveChangesAsync();
             await tx.CommitAsync();
             return Results.NoContent();

@@ -9,6 +9,7 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     pause: 0,
     unverified: 0,
     break: 0,
+    stopwatch: 0,
     personal: 0,
     unaccounted: 0,
   }
@@ -20,10 +21,11 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     partial = 0
   const bySubject = new Map<number, number>()
   const sessions: Session[] = []
+  const watches: Session[] = []
   for (const s of journal.sessions) {
     if (
       (studyDayId && s.studyDayId !== studyDayId) ||
-      (subjectId && (s.subjectId !== subjectId || s.mode !== 'focus'))
+      (subjectId && (s.subjectId !== subjectId || s.mode === 'break'))
     )
       continue
     const startsInside = s.startedAt >= start && s.startedAt < end
@@ -54,6 +56,8 @@ export function report(journal: Journal, start: number, end: number, subjectId =
         label: s.mode === 'break' ? 'Scheduled break' : s.subject,
       })
     }
+    if (s.mode === 'stopwatch' && s.endedAt && (startsInside || endsInside || intersects))
+      watches.push(s)
     if (s.mode !== 'focus') continue
     if (startsInside) planned += s.plannedSeconds * 1000
     if (endsInside && s.status === 'completed') completed++
@@ -93,6 +97,7 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     makeup,
     completed,
     partial,
+    watches,
     bySubject,
     sessions,
   }

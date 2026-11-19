@@ -45,6 +45,25 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
                 (p.FocusSeconds, p.BreakSeconds, p.Loop, p.AutoBreak, p.AutoFocus, p.CheckSeconds);
         }
 
+        if (block?.Mode == "stopwatch" || action == "watch-start")
+        {
+            if (action == "watch-start")
+            {
+                if (open.Count != 0 || settings.Mode != "focus")
+                    throw new InputError("Finish the current timer before starting a stopwatch.");
+                block = new TimerBlock { Mode = "stopwatch", StartedAt = now, LastObservedAt = now, StudyDay = await GetDay(now, cmd.Zone) };
+                Stopwatch.Open(block, now);
+                db.Blocks.Add(block);
+            }
+            else if (action is not ("sync" or "attach" or "settings"))
+                await Stopwatch.Apply(db, block!, action, now);
+            if (changed) settings.Revision++;
+            await db.SaveChangesAsync();
+            var snapshot = await Snapshot(settings, block?.EndedAt == null ? block : null, now);
+            await tx.CommitAsync();
+            return snapshot;
+        }
+
         if (action == "done")
         {
             if (open.Any(b => b.Interrupted)) throw new InputError("Resolve interrupted sessions first.");
@@ -318,11 +337,14 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
 
     private async Task<IResult> Snapshot(TimerSettings s, TimerBlock? b, long now, string? completion = null, long earnedCoins = 0)
     {
+        var watch = b?.Mode == "stopwatch" ? b : null;
+        if (watch != null) b = null;
         var history = await Journal.Detailed(db).AsNoTracking().Where(x => x.Mode == "focus" && x.EndedAt != null)
             .OrderByDescending(x => x.EndedAt).ThenByDescending(x => x.Id).Take(10).ToListAsync();
         var planned = b?.PlannedSeconds ?? (s.Mode == "focus" ? s.FocusSeconds : s.BreakSeconds);
         return Results.Ok(new
         {
+            stopwatch = watch == null ? null : Journal.RowAt(watch, Math.Max(watch.LastObservedAt, now)),
             completion,
             earnedCoins,
             nextCoinMs = b?.Mode == "focus" && b.Status == "running" && b.RemainingMs(now) <= 300000

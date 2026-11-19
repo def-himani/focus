@@ -9,6 +9,7 @@ import {
   type Session,
   type SessionInfo,
 } from './journal'
+import { StopwatchHistory } from './Stopwatch'
 import { report } from './accounting'
 import { Effort } from './Subjects'
 
@@ -52,7 +53,9 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
                 {elapsed(s.pausedMs)} ({s.pauseCount})
               </td>
               <td>{elapsed(s.unverifiedMs)}</td>
-              <td>{s.interrupted ? 'Interrupted' : s.status.charAt(0).toUpperCase() + s.status.slice(1)}</td>
+              <td>
+                {s.interrupted ? 'Interrupted' : s.status.charAt(0).toUpperCase() + s.status.slice(1)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -176,7 +179,7 @@ export function History(props: Props) {
   const [start, end] = calendarBounds(date)
   const rows = props.journal.sessions.filter(
     (s) =>
-      s.mode === 'focus' &&
+      ['focus', 'stopwatch'].includes(s.mode) &&
       s.endedAt &&
       (!props.subject || s.subjectId === props.subject) &&
       (!date || (s.startedAt < end && s.endedAt >= start)) &&
@@ -209,11 +212,18 @@ export function History(props: Props) {
           </select>
         </label>
       </div>
-      <SessionTable rows={rows} days={props.journal.days} />
+      <SessionTable rows={rows.filter((s) => s.mode === 'focus')} days={props.journal.days} />
+      <StopwatchHistory
+        entries={rows.filter((s) => s.mode === 'stopwatch')}
+        journal={props.journal}
+        refresh={props.refresh}
+      />
       <h2>Session details</h2>
-      {rows.map((s) => (
-        <Details key={s.id} s={s} journal={props.journal} refresh={props.refresh} />
-      ))}
+      {rows
+        .filter((s) => s.mode === 'focus')
+        .map((s) => (
+          <Details key={s.id} s={s} journal={props.journal} refresh={props.refresh} />
+        ))}
     </>
   )
 }
@@ -304,6 +314,7 @@ function Metrics({ data }: { data: ReturnType<typeof report> }) {
     ['Pause time', data.paused],
     ['Unverified', data.totals.unverified],
     ['Scheduled break', data.totals.break],
+    ['Stopwatch measured', data.totals.stopwatch],
     ['Make-up focus', data.makeup],
   ] as const
   return (
@@ -424,6 +435,7 @@ export function Statistics(props: Props) {
         />
       )}
       <h2>Sessions</h2>
+      <StopwatchHistory entries={data.watches} journal={journal} refresh={props.refresh} />
       <SessionTable rows={data.sessions} days={journal.days} />
       {data.sessions.map((s) => (
         <Details key={s.id} s={s} journal={journal} refresh={props.refresh} />

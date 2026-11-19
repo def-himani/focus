@@ -105,6 +105,16 @@ The UI should not feel like six disconnected sites. The default view is **Focus*
 
 ---
 
+### Stopwatch mode — Milestone 8 addition
+
+The Focus screen also offers a count-up stopwatch. Start immediately without a duration or subject. Pause and resume exclude the intervening time. Preserve exact timestamped active intervals across reload or restart. Only one timer may run at a time.
+
+On stop, save the entry locally in SQLite and offer General Activity as its default category, separate from General Study. Allow a to-do, an existing or newly named activity, or Uncategorized, with optional notes. History permits later recategorization while preserving the measured intervals. History and Statistics distinguish stopwatch time from planned Pomodoro time, verified focus, task effort progress, and rewards.
+
+The stopwatch must support +30-second and +1-minute manual adjustments with identifiable provenance separate from measured time. These adjustments have no effect on timestamps or focus credit.
+
+---
+
 ## 5. Session identity, titles, and subject selection
 
 ### SUB-01 — Subject picker
@@ -448,6 +458,7 @@ Complete each milestone, run its tests, and keep working features stable before 
 5. **History and Statistics:** Date/task/activity views, timeline, Study Day/overnight reports, optional personal-activity accounting.
 6. **Rewards and Garden:** Idempotent coin rewards, capped combo, Done for the Day reset, succulent shop, one automatically arranged garden, local art assets.
 7. **Polish:** Full-screen mode, attention accessibility, bell, optional rain/tick/themes, quick-start/re-entry options, automated browser tests, local backup/restore and safe portfolio/demo setup.
+8. **Stopwatch:** General-purpose time logging within Focus, with distinct reporting and manual adjustments.
 
 Milestone ordering is an engineering plan, **not permission to omit later agreed features**. Add a smoke test or acceptance test for each crucial behavior as it is implemented.
 

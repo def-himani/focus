@@ -36,6 +36,7 @@ export type Session = {
   extensionSeconds: number
   targetSeconds: number
   plannedSeconds: number
+  measuredMs: number
   effectiveMs: number
   pausedMs: number
   offMs: number
