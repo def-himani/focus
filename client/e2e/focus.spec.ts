@@ -350,7 +350,15 @@ test('Study Day controls, cancel, weekly and monthly drill-down, timeline and sa
   await expect(done).toBeVisible()
   await button('Start focus').click()
   await button('Full screen').click()
-  page.once('dialog', (d) => d.accept())
+  await expect(button('Exit full screen')).toBeVisible()
+  // Native confirmation dialogs can exit browser full-screen mode.
+  await page.evaluate(() => {
+    const confirm = window.confirm
+    window.confirm = (message) => {
+      window.confirm = confirm
+      return message.startsWith('Discard this Pomodoro?')
+    }
+  })
   await button('Cancel & Discard').click()
   await expect(button('Start focus')).toBeEnabled()
   await button('Exit full screen').click()
