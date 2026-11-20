@@ -70,7 +70,18 @@ public sealed class TimerService(FocusDbContext db, TimeProvider clock, GardenSe
             return snapshot;
         }
 
-        if (action == "done")
+        if (action == "discard" && block?.Mode == "focus")
+        {
+            var at = block.Interrupted ? block.LastObservedAt : now;
+            if (block.Status == "running") at = Math.Min(at, block.LastObservedAt + block.RemainingMs(block.LastObservedAt));
+            Finish(block, at, "discarded");
+            block.VoidedAt = now;
+            block = open.FirstOrDefault(b => b.EndedAt == null);
+            settings.Mode = block?.Mode ?? "focus";
+        }
+        else if (action == "day-start" && block == null)
+            await GetDay(now, cmd.Zone);
+        else if (action == "done")
         {
             if (open.Any(b => b.Interrupted)) throw new InputError("Resolve interrupted sessions first.");
             var day = db.StudyDays.Local.FirstOrDefault(d => d.End == null) ?? await db.StudyDays.SingleOrDefaultAsync(d => d.End == null);

@@ -643,6 +643,104 @@ public sealed class TimerTests : IDisposable
         Assert.Equal("One minute remaining.", (string?)(await Act("sync"))["spoken"]);
     }
 
+    [Fact]
+    public async Task Study_day_can_start_and_end_explicitly_without_crediting_gaps_or_discarded_focus()
+    {
+        await Act("day-start");
+        await Act("settings", new(3000, 300, false, false, false));
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(20);
+        var result = await Act("discard");
+        Assert.Empty(result["history"]!.AsArray());
+        clock.Now = clock.Now.AddHours(28);
+        await Act("done");
+        await Act("day-start");
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(2);
+        var saved = Assert.Single((await Act("stop"))["history"]!.AsArray())!;
+        Assert.Equal(120000, (long)saved["effectiveMs"]!);
+        var journal = await client.GetFromJsonAsync<JsonNode>("/api/journal");
+        Assert.Equal(2, journal!["days"]!.AsArray().Count);
+        Assert.Single(journal["sessions"]!.AsArray());
+        Restart();
+        Assert.Equal(0, (long)(await Garden())["balance"]!);
+    }
+
+    [Fact]
+    public async Task Stopwatch_correction_partitions_running_spans_and_can_be_replaced_or_cleared()
+    {
+        await Act("watch-start");
+        clock.Now = clock.Now.AddMinutes(26);
+        await Act("watch-pause");
+        clock.Now = clock.Now.AddHours(2);
+        await Act("watch-resume");
+        clock.Now = clock.Now.AddMinutes(3);
+        await Act("watch-stop");
+        async Task<JsonNode> Row() => (await client.GetFromJsonAsync<JsonNode>("/api/journal"))!["sessions"]![0]!;
+        var original = await Row();
+        var path = "/api/stopwatch/" + (int)original["id"]!;
+        foreach (var off in new[] { 300000, 60000, 0 })
+        {
+            (await client.PutAsJsonAsync(path, new SessionInfo(StopwatchOffMs: off))).EnsureSuccessStatusCode();
+            var row = await Row();
+            Assert.Equal(29 * 60000, (long)row["measuredMs"]!);
+            Assert.Equal(off, (long)row["offMs"]!);
+            var spans = row["intervals"]!.AsArray();
+            long Time(string category) => spans.Where(i => (string?)i!["category"] == category).Sum(i => (long)i!["end"]! - (long)i["start"]!);
+            Assert.Equal(off, Time("off-task"));
+            Assert.Equal(29 * 60000 - off, Time("stopwatch"));
+            Assert.True(JsonNode.DeepEquals(original["endedAt"], row["endedAt"]));
+            Assert.Equal(0, (long)row["effectiveMs"]!);
+        }
+        foreach (var bad in new[] { -1, 30 * 60000 })
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(path, new SessionInfo(StopwatchOffMs: bad))).StatusCode);
+        (await client.DeleteAsync("/api/sessions/" + (int)original["id"]!)).EnsureSuccessStatusCode();
+        Assert.Empty((await client.GetFromJsonAsync<JsonNode>("/api/journal"))!["sessions"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task Voiding_reverses_available_credit_once_without_removing_a_purchased_plant()
+    {
+        await Act("settings", new(2160, 300, false, false, false));
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(36);
+        var entry = (await Act("sync"))["history"]![0]!;
+        (await client.PostAsJsonAsync("/api/garden/purchases", new { key = Guid.NewGuid(), plantKey = "cactus" })).EnsureSuccessStatusCode();
+        var url = "/api/sessions/" + (int)entry["id"]!;
+        var deletes = await Task.WhenAll(client.DeleteAsync(url), client.DeleteAsync(url));
+        Assert.All(deletes, r => r.EnsureSuccessStatusCode());
+        Restart();
+        var garden = await Garden();
+        Assert.Equal(0, (long)garden["balance"]!);
+        Assert.Single(garden["plants"]!.AsArray());
+        Assert.Empty((await client.GetFromJsonAsync<JsonNode>("/api/journal"))!["sessions"]!.AsArray());
+        revision = (long)(await client.GetFromJsonAsync<JsonNode>("/api/timer"))!["revision"]!;
+        await Act("start");
+        clock.Now = clock.Now.AddMinutes(36);
+        Assert.Equal(3, (long)(await Act("sync"))["earnedCoins"]!);
+    }
+
+    [Fact]
+    public async Task Archived_and_deleted_subjects_keep_history_when_the_name_is_reused()
+    {
+        await Command("start", info: new(Activity: "Practice violin"));
+        clock.Now = clock.Now.AddMinutes(2);
+        var session = (await Act("stop"))["history"]![0]!;
+        var originalId = (int)session["subjectId"]!;
+        var url = "/api/subjects/" + originalId;
+        foreach (var state in new[] { "archived", "active", "deleted" })
+            (await client.PutAsJsonAsync(url, new SubjectEdit("Practice violin", "activity", State: state))).EnsureSuccessStatusCode();
+        await Command("start", info: new(Activity: "Practice violin"));
+        clock.Now = clock.Now.AddMinutes(1);
+        await Act("stop");
+        Restart();
+        var sessions = (await client.GetFromJsonAsync<JsonNode>("/api/journal"))!["sessions"]!.AsArray();
+        Assert.Equal(2, sessions.Count);
+        Assert.Equal(originalId, (int)sessions[1]!["subjectId"]!);
+        Assert.NotEqual(originalId, (int)sessions[0]!["subjectId"]!);
+        Assert.All(sessions, row => Assert.Equal("Practice violin", (string?)row!["subject"]));
+    }
+
     public void Dispose()
     {
         client.Dispose();

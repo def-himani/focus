@@ -141,7 +141,7 @@ test('manual additions belong to the entry date, outside the measured timeline a
 test('local time ranges include the end date only across midnight', () => {
   const before = midnight - 300000
   const after = midnight + 300000
-  const endDate = new Date(after).toLocaleDateString()
+  const endDate = new Date(after).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   assert.ok(timeRange(before, after).includes(endDate))
   assert.ok(!timeRange(after, after + 60000).includes(endDate))
   assert.ok(timeRange(after, null).endsWith('ongoing'))

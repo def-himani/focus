@@ -112,7 +112,7 @@ namespace Focus.Api.Data.Migrations
 
                     b.HasIndex("NormalizedName")
                         .IsUnique()
-                        .HasFilter("Kind = 'activity'");
+                        .HasFilter("Kind = 'activity' AND State <> 'deleted'");
 
                     b.ToTable("Subjects");
 
@@ -145,6 +145,9 @@ namespace Focus.Api.Data.Migrations
                     b.Property<bool>("QualifyingCompletion")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ReversalForBlockId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("Slot")
                         .HasColumnType("INTEGER");
 
@@ -163,6 +166,9 @@ namespace Focus.Api.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("PurchaseKey")
+                        .IsUnique();
+
+                    b.HasIndex("ReversalForBlockId")
                         .IsUnique();
 
                     b.HasIndex("Slot")
@@ -319,6 +325,9 @@ namespace Focus.Api.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("StopwatchOffMs")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("StudyDayId")
                         .HasColumnType("INTEGER");
 
@@ -334,6 +343,9 @@ namespace Focus.Api.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<long>("VerifiedThrough")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("VoidedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
@@ -412,6 +424,11 @@ namespace Focus.Api.Data.Migrations
 
             modelBuilder.Entity("Focus.Api.Garden.CoinEntry", b =>
                 {
+                    b.HasOne("Focus.Api.Timers.TimerBlock", null)
+                        .WithMany()
+                        .HasForeignKey("ReversalForBlockId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Focus.Api.Timers.TimerBlock", null)
                         .WithMany()
                         .HasForeignKey("TimerBlockId")

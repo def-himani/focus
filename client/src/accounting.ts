@@ -20,13 +20,14 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     makeup = 0,
     completed = 0,
     partial = 0
+  const subjectTotals = new Map<number, { focus: number; distracted: number; activity: number }>()
   const bySubject = new Map<number, number>()
   const sessions: Session[] = []
   const watches: Session[] = []
   for (const s of journal.sessions) {
     if (
       (studyDayId && s.studyDayId !== studyDayId) ||
-      (subjectId && (s.subjectId !== subjectId || s.mode === 'break'))
+      (subjectId && (s.subjectId !== Math.max(0, subjectId) || s.mode === 'break'))
     )
       continue
     const startsInside = s.startedAt >= start && s.startedAt < end
@@ -44,6 +45,13 @@ export function report(journal: Journal, start: number, end: number, subjectId =
       intersects = true
       const ms = b - a
       totals[i.category] += ms
+      if (s.mode !== 'break') {
+        const r = subjectTotals.get(s.subjectId) ?? { focus: 0, distracted: 0, activity: 0 }
+        if (i.category === 'focus') r.focus += ms
+        if (i.category === 'off-task') r.distracted += ms
+        if (i.category === 'stopwatch') r.activity += ms
+        subjectTotals.set(s.subjectId, r)
+      }
       if (i.pause) {
         paused += ms
         if (i.start >= start) pauses++
@@ -103,6 +111,7 @@ export function report(journal: Journal, start: number, end: number, subjectId =
     manualMs,
     watches,
     bySubject,
+    subjectTotals,
     sessions,
   }
 }

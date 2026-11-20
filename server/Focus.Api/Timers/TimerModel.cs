@@ -29,6 +29,8 @@ public class TimerBlock
     public long LastObservedAt { get; set; }
     public List<BlockInterval> Intervals { get; set; } = [];
 
+    public long? VoidedAt { get; set; }
+    public long StopwatchOffMs { get; set; }
     public int ReminderMask { get; set; }
     public List<StopwatchAdjustment> Adjustments { get; set; } = [];
     public List<AttentionCheck> Checks { get; set; } = [];

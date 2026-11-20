@@ -52,18 +52,19 @@
 
 ## 3. Navigation and app views
 
-A single web application with **six views**, navigated without leaving the application:
+A single web application with **seven views**, navigated without leaving the application:
 
 | View | Purpose | Essential contents |
 |---|---|---|
 | **Focus** | Main study experience | Timer, preset controls, subject/activity selector, session title, active estimated-effort progress, stationary read-only to-do overlay, audio/loop controls, full-screen mode, recent history below the fold |
+| **Activity Log** | Browse recorded work | Weekly timesheet and monthly calendar anchored to the start of each logical Study Day, with links to History |
 | **To-Dos** | Minimal to-do management | Add/edit/complete/delete tasks; optional effort estimate; progress and linked-session access; completed tasks |
 | **History** | Explore exact session records | Detailed chronological/filterable session table, actual start/end clock times, editing of titles/tags/notes, interruption detail |
 | **Statistics** | Analyze time honestly | Today's figures, previous days, calendar-day and Study Day breakdowns, time-accounting timeline, by-task and by-activity reports |
 | **Garden** | Positive gamification | Coin balance, succulent shop, single garden canvas with automatically placed purchased plants |
 | **Settings** | Configure behavior | Durations, check-ins, cycling, sound/notifications, optional themes, data protection/backups |
 
-The UI should not feel like six disconnected sites. The default view is **Focus**. The garden is a **dedicated view**, not timer background art. The To-Dos overlay on Focus is not the management page.
+The UI should not feel like disconnected sites. The default view is **Focus**. The garden is a **dedicated view**, not timer background art. The To-Dos overlay on Focus is not the management page.
 
 ---
 
@@ -111,7 +112,7 @@ The Focus screen also offers a count-up stopwatch. Start immediately without a d
 
 On stop, save the entry locally in SQLite and offer General Activity as its default category, separate from General Study. Allow a to-do, an existing or newly named activity, or Uncategorized, with optional notes. History permits later recategorization while preserving the measured intervals. History and Statistics distinguish stopwatch time from planned Pomodoro time, verified focus, task effort progress, and rewards.
 
-Offer +30-second and +1-minute manual additions while running, paused, and after stopping. Show the measured duration, manual additions, and combined total. Persist each addition with its own identifier and recording time. Preserve the original timestamps and exclude additions from day timelines, Pomodoro focus, task effort and rewards.
+Milestone 8 introduced +30-second and +1-minute manual additions. Milestone 9 replaces these controls with an optional post-stop distracted-time correction. For existing Milestone 8 additions, the following accounting rules still apply. Keep measured duration and historical manual additions available in detailed reporting. Persist each addition with its own identifier and recording time. Preserve the original timestamps and exclude additions from day timelines, Pomodoro focus, task effort and rewards.
 
 ### Milestone 8 timer alerts and usability
 
@@ -468,6 +469,8 @@ Complete each milestone, run its tests, and keep working features stable before 
 7. **Polish:** Full-screen mode, attention accessibility, bell, optional rain/tick/themes, quick-start/re-entry options, automated browser tests, local backup/restore and safe portfolio/demo setup.
 8. **Stopwatch, audio and usability:** General time logging, manual additions, local timer alerts, and reviewed refinements across Focus, To-Dos, History and Statistics.
 
+9. **Activity Log and clearer time tracking:** Implement the [Milestone 9 specification](MILESTONE_9.md), including Study Day navigation, read-only weekly and monthly summaries, discard and correction flows, and accessible session timelines.
+
 Milestone ordering is an engineering plan, **not permission to omit later agreed features**. Add a smoke test or acceptance test for each crucial behavior as it is implemented.
 
 ---
@@ -476,7 +479,7 @@ Milestone ordering is an engineering plan, **not permission to omit later agreed
 
 - No name other than **Focus** for the application.
 - No Python/Flask backend, no dependence on cloud services for personal data.
-- No built-in calendar, deadlines, urgency generators, rankings, penalties, streak-loss mechanics, or guilt messages.
+- No calendar planner, deadlines, urgency generators, rankings, penalties, streak-loss mechanics, or guilt messages.
 - No today/tomorrow planner, scheduling, prioritized task boards, reminders, recurring tasks, nested subtasks, Kanban, or forced task organization.
 - No garden graphics occupying the Pomodoro background; no furniture/room game; no additional rooms/unlockable land areas.
 - No requirement to create a task before starting, and no daily logging requirement before studying.

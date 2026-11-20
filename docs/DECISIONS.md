@@ -39,3 +39,11 @@
 - Store manual increments as timestamped, uniquely keyed rows linked to the stopwatch. Attribute manually added totals to the entry’s starting calendar date and Study Day. Only measured intervals occupy the calendar timeline.
 - Check reminder crossings using the persisted remaining-time anchor and a durable per-countdown threshold mask. A new make-up countdown starts with fresh thresholds. Allow five seconds of delivery tolerance, suppress older reminders, and combine simultaneous transition announcements.
 - The count-in applies to explicit starts, including quick starts and previously used subjects. A revision change, navigation away, or a suspended count-in cancels the pending start. Existing auto-start and recovery rules stay in control of automatic transitions.
+
+## Milestone 9
+
+- The Activity Log groups saved entries by the persisted Study Day start-date label in its original time zone. A legacy or unlinked entry uses its start date in the viewer’s local zone. Calendar statistics still clip actual intervals to local midnights. No separate totals are persisted.
+- Stopwatch distraction is a replaceable classification of measured time. Attribute the reported duration to the latest measured intervals, skipping paused gaps. This gives reproducible calendar-date splits when the user supplies a duration without precise boundaries. Original timestamps and pre-upgrade manual additions stay intact.
+- Overview durations round down to whole minutes, with “under 1 min” for positive shorter spans. Percentages round to complementary whole numbers. Only verified focus and explicitly classified distraction contribute to their denominator.
+- Voided blocks retain their intervals for audit and are excluded from operational queries. Reversals append a uniquely linked coin transaction, capped at the original reward and the remaining wallet balance. Purchased plants and previously settled bonuses on other sessions stay intact. Future qualifying counts exclude voided sessions.
+- Soft-deleted subjects retain their IDs for existing sessions. They leave the picker, and their names become available to new activities. Archiving reserves an activity’s name and supports restoration.

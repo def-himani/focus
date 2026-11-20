@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect, useId } from 'react'
 import { elapsed } from './journal'
 import type { Snapshot, CommandData } from './timer'
 
@@ -14,9 +14,31 @@ export function AttentionPanel({
   const [reporting, setReporting] = useState(false)
   const [minutes, setMinutes] = useState('')
   const s = timer.active
+  const prompt = s?.checks.find((c) => c.answeredAt === null)
+  const review = s?.status === 'review'
+  const dialog = useRef<HTMLFieldSetElement>(null)
+  const label = useId()
+  const showDialog = !!s && (review || !!prompt) && !s.interrupted
+  useEffect(() => {
+    if (!showDialog) return
+    const previous = document.activeElement
+    dialog.current?.focus()
+    return () => {
+      if (
+        previous instanceof HTMLElement &&
+        previous.isConnected &&
+        (dialog.current?.contains(document.activeElement) || document.activeElement === document.body)
+      )
+        previous.focus()
+    }
+  }, [showDialog, review, s?.id])
   if (!s) return null
-  const prompt = s.checks.find((c) => c.answeredAt === null)
-  const review = s.status === 'review'
+  const unknown = s.intervals.filter((i) => i.category === 'unverified' && i.end > i.start)
+  const first = unknown[0]?.start ?? prompt?.boundary ?? s.startedAt
+  const last = unknown.at(-1)?.end ?? s.lastObservedAt
+  const clock = (at: number) =>
+    new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
   const offMs = Math.round(Number(minutes) * 60000)
   const submit = (action: string, data?: CommandData) => {
     act(action, data)
@@ -70,20 +92,43 @@ export function AttentionPanel({
     )
   if (s.mode === 'break') return null
   return (
-    <fieldset disabled={disabled} className="attention">
+    <fieldset
+      disabled={disabled}
+      ref={dialog}
+      role={showDialog ? 'dialog' : undefined}
+      tabIndex={showDialog ? -1 : undefined}
+      aria-labelledby={showDialog ? label : undefined}
+      className={showDialog ? 'attention check-dialog' : 'attention'}
+    >
       {(prompt || review) && (
         <section aria-live="polite">
-          <h2>{review ? 'Review your focus time' : 'Still studying?'}</h2>
+          <h2 id={label}>{review ? 'Review your focus time' : 'Still focusing?'}</h2>
           <p>
-            {elapsed(s.unverifiedMs)} unverified ·{' '}
-            {new Date(prompt?.boundary ?? s.startedAt).toLocaleTimeString()} –{' '}
-            {new Date(
-              review ? Math.max(...s.intervals.map((i) => i.end)) : s.lastObservedAt,
-            ).toLocaleTimeString()}
+            {review
+              ? 'The timer stopped with some running time still to confirm.'
+              : 'The countdown is still running.'}{' '}
+            How did you spend the running time between {clock(first)} and {clock(last)}? Time to confirm:{' '}
+            {elapsed(s.unverifiedMs)}.
           </p>
-          <button onClick={() => submit('answer')}>{review ? 'All focused' : 'Yes'}</button>
-          <button onClick={() => setReporting(true)}>{review ? 'Mixed' : 'No, I got distracted'}</button>
-          {review && <button onClick={() => submit('answer', { allOff: true })}>All off-task</button>}
+          {review && unknown.length > 1 && (
+            <details>
+              <summary>Times to review</summary>
+              {unknown.map((i) => (
+                <p key={i.start}>
+                  {clock(i.start)} – {clock(i.end)}
+                </p>
+              ))}
+            </details>
+          )}
+          <div className="chips">
+            <button className="primary" onClick={() => submit('answer')}>
+              {review ? 'Focused throughout' : "Yes, I'm focused"}
+            </button>
+            {review && (
+              <button onClick={() => submit('answer', { allOff: true })}>Distracted throughout</button>
+            )}
+            <button onClick={() => setReporting(true)}>{review ? 'Mixed' : 'I was distracted'}</button>
+          </div>
         </section>
       )}
       {!review && !prompt && s.status === 'running' && (
@@ -109,7 +154,7 @@ export function AttentionPanel({
             />
           </label>
           {(prompt || review) && (
-            <small>The remaining unverified running time will count as focused.</small>
+            <small>The remaining time awaiting confirmation will count as focused.</small>
           )}
           <button>Save classification</button>
         </form>

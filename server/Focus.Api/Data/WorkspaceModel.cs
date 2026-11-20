@@ -34,5 +34,5 @@ public class DailyNote
     public string Note { get; set; } = "";
 }
 
-public record SessionInfo(int? SubjectId = null, string? Activity = null, string Title = "", string Notes = "", string Tags = "");
+public record SessionInfo(int? SubjectId = null, string? Activity = null, string Title = "", string Notes = "", string Tags = "", long? StopwatchOffMs = null);
 public sealed class InputError(string message) : Exception(message);

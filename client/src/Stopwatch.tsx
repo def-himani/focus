@@ -1,63 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { addedSeconds, timeRange, save, type Journal, type Session } from './journal'
+import { shortDate } from './activityLog'
+import { DeleteEntry } from './DeleteEntry'
+import { useEffect, useId, useRef, useState, type Ref, type ReactNode } from 'react'
+import { elapsed, localDate, timeRange, save, type Journal, type Session } from './journal'
 import { duration } from './timer'
-
-function Adjustments({
-  entry,
-  measuredMs,
-  refresh,
-}: {
-  entry: Session
-  measuredMs: number
-  refresh: () => void
-}) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const pending = useRef<{ key: string; seconds: number } | null>(null)
-  async function add(seconds: number) {
-    if (busy) return
-    if (!pending.current || pending.current.seconds !== seconds)
-      pending.current = { key: crypto.randomUUID(), seconds }
-    setBusy(true)
-    try {
-      await save('stopwatch/' + entry.id + '/adjustments/' + pending.current.key, 'PUT', { seconds })
-      pending.current = null
-      setError('')
-      refresh()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const added = addedSeconds(entry)
-  return (
-    <div className="manual-adjustments">
-      <p>
-        Manually added <strong>{duration(added)}</strong> · Total{' '}
-        {duration(Math.floor(measuredMs / 1000) + added)}
-      </p>
-      <div className="chips">
-        {[30, 60].map((seconds) => (
-          <button key={seconds} disabled={busy} onClick={() => void add(seconds)}>
-            {seconds === 30 ? '+30s' : '+1m'}
-          </button>
-        ))}
-      </div>
-      {entry.adjustments.length > 0 && (
-        <details>
-          <summary>Adjustment history</summary>
-          {entry.adjustments.map((a) => (
-            <p key={a.id}>
-              {new Date(a.recordedAt).toLocaleString()} · +{a.seconds}s
-            </p>
-          ))}
-        </details>
-      )}
-      {error && <small role="alert">{error}</small>}
-    </div>
-  )
-}
 
 export function StopwatchDetails({
   entry,
@@ -72,12 +17,16 @@ export function StopwatchDetails({
   const [category, setCategory] = useState(String(entry.subjectId))
   const [name, setName] = useState('')
   const [notes, setNotes] = useState(entry.notes)
+  const [off, setOff] = useState(entry.offMs ? String(entry.offMs / 60000) : '')
+  const [title, setTitle] = useState(entry.title)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   useEffect(() => {
     setCategory(String(entry.subjectId))
     setNotes(entry.notes)
-  }, [entry.subjectId, entry.notes])
+    setOff(entry.offMs ? String(entry.offMs / 60000) : '')
+    setTitle(entry.title)
+  }, [entry.subjectId, entry.notes, entry.offMs, entry.title])
   return (
     <form
       className="fields"
@@ -89,6 +38,8 @@ export function StopwatchDetails({
             subjectId: Number(category) || undefined,
             activity: category === 'new' ? name.trim() : undefined,
             notes,
+            title,
+            stopwatchOffMs: Math.round(Number(off) * 60000),
           })
           refresh()
           setMessage('Saved')
@@ -99,6 +50,22 @@ export function StopwatchDetails({
         }
       }}
     >
+      <label>
+        Distracted time (optional, minutes)
+        <input
+          type="number"
+          min="0"
+          step="any"
+          max={entry.measuredMs / 60000}
+          value={off}
+          placeholder="0"
+          onChange={(e) => setOff(e.target.value)}
+        />
+      </label>
+      <label>
+        Entry title
+        <input value={title} maxLength={300} onChange={(e) => setTitle(e.target.value)} />
+      </label>
       <label>
         Category
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -128,13 +95,17 @@ export function StopwatchDetails({
           onChange={(e) => setNotes(e.target.value)}
         />
       </div>
-      <button disabled={busy || (category === 'new' && !name.trim())}>Save category and notes</button>
+      <button disabled={busy || (category === 'new' && !name.trim())}>Save entry</button>
       <small role="status">{message}</small>
     </form>
   )
 }
 
 export function StopwatchPanel({
+  card,
+  fullscreen,
+  overlay,
+  toggleFullscreen,
   watch,
   received,
   journal,
@@ -142,6 +113,10 @@ export function StopwatchPanel({
   act,
   refresh,
 }: {
+  card: Ref<HTMLElement>
+  fullscreen: boolean
+  overlay: ReactNode
+  toggleFullscreen: () => void
   watch?: Session | null
   received: number
   journal: Journal
@@ -150,6 +125,11 @@ export function StopwatchPanel({
   refresh: () => void
 }) {
   const [now, setNow] = useState(() => performance.now())
+  const previousWatch = useRef(watch?.id)
+  useEffect(() => {
+    if (previousWatch.current && !watch && fullscreen) toggleFullscreen()
+    previousWatch.current = watch?.id
+  }, [watch, fullscreen, toggleFullscreen])
   const running = watch?.status === 'running'
   useEffect(() => {
     if (!running) return
@@ -160,7 +140,15 @@ export function StopwatchPanel({
   const last = journal.sessions.find((s) => s.mode === 'stopwatch' && s.endedAt !== null)
   return (
     <>
-      <section className="timer-card" aria-label="Count-up stopwatch">
+      <section
+        ref={card}
+        className={'timer-card' + (fullscreen ? ' expanded' : '')}
+        aria-label="Count-up stopwatch"
+      >
+        {fullscreen && overlay}
+        <button className="expand-button" onClick={toggleFullscreen}>
+          {fullscreen ? 'Exit full screen' : 'Full screen'}
+        </button>
         <span className="mode">{running ? 'Running' : watch ? 'Paused' : 'Stopwatch'}</span>
         <div className="dial">
           <div className="dial-face">
@@ -182,15 +170,15 @@ export function StopwatchPanel({
             </button>
           )}
         </div>
-        {watch && <Adjustments key={watch.id} entry={watch} measuredMs={ms} refresh={refresh} />}
       </section>
       {!watch && last && (
         <section className="panel">
           <h2>Last stopwatch entry</h2>
           <p>
-            {duration(Math.floor(last.measuredMs / 1000))} measured · {last.subject}
+            {elapsed(last.measuredMs - last.offMs)} activity · {elapsed(last.offMs)} distracted ·{' '}
+            {last.subject}
           </p>
-          <Adjustments entry={last} measuredMs={last.measuredMs} refresh={refresh} />
+
           <StopwatchDetails key={last.id} entry={last} journal={journal} refresh={refresh} />
         </section>
       )}
@@ -200,9 +188,11 @@ export function StopwatchPanel({
 
 export function StopwatchHistory({
   entries,
+  entryId,
   journal,
   refresh,
 }: {
+  entryId?: number
   entries: Session[]
   journal: Journal
   refresh: () => void
@@ -212,13 +202,21 @@ export function StopwatchHistory({
     <section>
       <h2>Stopwatch entries</h2>
       {entries.map((s) => (
-        <details className="panel" key={s.id}>
+        <details className="panel" key={s.id} id={'entry-' + s.id} open={entryId === s.id || undefined}>
           <summary>
-            {new Date(s.startedAt).toLocaleDateString()} · {timeRange(s.startedAt, s.endedAt)} ·{' '}
-            {s.subject} · {duration(Math.floor(s.measuredMs / 1000))} measured
+            {shortDate(localDate(s.startedAt))} · {timeRange(s.startedAt, s.endedAt)} · {s.subject} ·{' '}
+            {elapsed(s.measuredMs - s.offMs)} activity · {elapsed(s.offMs)} distracted
           </summary>
-          <Adjustments entry={s} measuredMs={s.measuredMs} refresh={refresh} />
+          <p>{s.title}</p>
+          <details>
+            <summary>Exact timing</summary>
+            <p>
+              {new Date(s.startedAt).toLocaleString()} – {new Date(s.endedAt!).toLocaleString()} ·{' '}
+              {s.measuredMs / 1000} seconds measured
+            </p>
+          </details>
           <StopwatchDetails entry={s} journal={journal} refresh={refresh} />
+          <DeleteEntry id={s.id} refresh={refresh} />
         </details>
       ))}
     </section>
