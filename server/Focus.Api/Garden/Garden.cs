@@ -22,6 +22,7 @@ public class CoinEntry
     public int? TimerBlockId { get; set; }
     public int? StudyDayId { get; set; }
     public long Units { get; set; }
+    public int? ReversalForBlockId { get; set; }
     public long VerifiedMs { get; set; }
     public bool QualifyingCompletion { get; set; }
     public int BonusCoins { get; set; }
@@ -72,14 +73,22 @@ public sealed class GardenService(FocusDbContext db, IOptions<RewardRates> optio
     // Called within the timer transaction, after the block has its persistent ID.
     public async Task<long> Settle(TimerBlock block)
     {
-        if (block.Mode != "focus" || block.EndedAt == null) return 0;
+        if (block.Mode != "focus" || block.EndedAt == null || block.VoidedAt != null) return 0;
         if (await db.Coins.AnyAsync(e => e.TimerBlockId == block.Id)) return 0;
-        var previous = await db.Coins.CountAsync(e => e.StudyDayId == block.StudyDayId && e.QualifyingCompletion);
+        var previous = await db.Coins.CountAsync(e => e.StudyDayId == block.StudyDayId && e.QualifyingCompletion && !db.Coins.Any(r => r.ReversalForBlockId == e.TimerBlockId));
         var reward = Reward(block, previous);
         var before = await BalanceUnits();
         db.Coins.Add(reward);
         await db.SaveChangesAsync();
         return (before + reward.Units) / UnitsPerCoin - before / UnitsPerCoin;
+    }
+
+    // Inside the same transaction as voiding the session. Protect already purchased plants.
+    public async Task Reverse(int blockId)
+    {
+        var reward = await db.Coins.SingleOrDefaultAsync(e => e.TimerBlockId == blockId);
+        if (reward != null)
+            db.Coins.Add(new CoinEntry { ReversalForBlockId = blockId, Units = -Math.Min(reward.Units, await BalanceUnits()) });
     }
 
     public async Task CreditExistingSessions()
@@ -89,7 +98,7 @@ public sealed class GardenService(FocusDbContext db, IOptions<RewardRates> optio
             .Where(b => b.EndedAt != null && b.Mode == "focus" && !db.Coins.Any(c => c.TimerBlockId == b.Id))
             .OrderBy(b => b.EndedAt).ThenBy(b => b.Id).ToListAsync();
         if (missing.Count == 0) return;
-        var counts = await db.Coins.Where(e => e.StudyDayId.HasValue && e.QualifyingCompletion)
+        var counts = await db.Coins.Where(e => e.StudyDayId.HasValue && e.QualifyingCompletion && !db.Coins.Any(r => r.ReversalForBlockId == e.TimerBlockId))
             .GroupBy(e => e.StudyDayId!.Value).Select(g => new { Day = g.Key, Count = g.Count() })
             .ToDictionaryAsync(g => g.Day, g => g.Count);
         foreach (var block in missing)

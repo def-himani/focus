@@ -19,11 +19,14 @@ public sealed class FocusDbContext(DbContextOptions<FocusDbContext> options) : D
     {
         model.Entity<CoinEntry>().HasIndex(c => c.TimerBlockId).IsUnique();
         model.Entity<CoinEntry>().HasIndex(c => c.PurchaseKey).IsUnique();
+        model.Entity<TimerBlock>().HasQueryFilter(b => b.VoidedAt == null);
+        model.Entity<CoinEntry>().HasIndex(c => c.ReversalForBlockId).IsUnique();
+        model.Entity<CoinEntry>().HasOne<TimerBlock>().WithMany().HasForeignKey(c => c.ReversalForBlockId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<CoinEntry>().HasIndex(c => c.Slot).IsUnique();
         model.Entity<CoinEntry>().HasOne<TimerBlock>().WithMany().HasForeignKey(c => c.TimerBlockId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<DailyNote>().HasKey(n => n.Date);
         model.Entity<Subject>().HasData(new Subject { Id = 1, Name = "General Study", NormalizedName = "GENERAL STUDY" });
-        model.Entity<Subject>().HasIndex(s => s.NormalizedName).IsUnique().HasFilter("Kind = 'activity'");
+        model.Entity<Subject>().HasIndex(s => s.NormalizedName).IsUnique().HasFilter("Kind = 'activity' AND State <> 'deleted'");
         model.Entity<Subject>().HasIndex(s => s.CreationKey).IsUnique();
         model.Entity<TimerBlock>().HasOne(b => b.Subject).WithMany().HasForeignKey(b => b.SubjectId);
         model.Entity<TimerBlock>().HasOne(b => b.StudyDay).WithMany().HasForeignKey(b => b.StudyDayId);

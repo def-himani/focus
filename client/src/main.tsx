@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
+import { ActivityLog } from './ActivityLog'
+import { dayName, dayRange } from './activityLog'
 import { StopwatchPanel } from './Stopwatch'
 import { Garden } from './Garden'
 import { TimerSettings, SoundSettings } from './Settings'
@@ -18,6 +20,7 @@ function Focus() {
   const [view, setView] = useState('Focus')
   const [stored, setJournal] = useState<Journal>(blank)
   const [journalError, setJournalError] = useState('')
+  const [entryId, setEntryId] = useState<number>()
   const [subject, setSubject] = useState(0)
   const [draft, setDraft] = useState<SessionInfo>()
   const [serial, setSerial] = useState(0)
@@ -117,8 +120,14 @@ function Focus() {
       s.endedAt &&
       journal.subjects.some((subject) => subject.id === s.subjectId && subject.state === 'active'),
   )
-  const nav = ['Focus', 'To-Dos', 'History', 'Statistics', 'Garden', 'Settings']
-  const reportProps = { journal, subject, setSubject, refresh }
+  function openHistory(id: number, entry?: number) {
+    setSubject(id || -1)
+    setEntryId(entry)
+    setView('History')
+  }
+  const openDay = journal.days.find((d) => !d.end)
+  const nav = ['Focus', 'Activity Log', 'To-Dos', 'History', 'Statistics', 'Garden', 'Settings']
+  const reportProps = { journal, subject, setSubject, refresh, openHistory, entryId }
   const blocked =
     live?.interrupted ||
     live?.status === 'review' ||
@@ -156,6 +165,15 @@ function Focus() {
       testVoice={sounds.testVoice}
       disabled={disabled}
       change={(p) => configure({ playback: { ...prefs.playback, ...p } })}
+    />
+  )
+  const pendingAttention = live?.status === 'review' || live?.checks.some((c) => c.answeredAt === null)
+  const attentionPanel = timer && (
+    <AttentionPanel
+      key={live?.id}
+      timer={timer}
+      disabled={disabled}
+      act={(action, data) => void update(action, undefined, data)}
     />
   )
   const overlay = (
@@ -196,6 +214,7 @@ function Focus() {
             aria-current={view === v ? 'page' : undefined}
             onClick={() => {
               countIn.cancel()
+              setEntryId(undefined)
               setView(v)
             }}
           >
@@ -233,13 +252,8 @@ function Focus() {
           </p>
         )}
         {message && <p role="alert">{message}</p>}
-        {view !== 'Focus' && timer && (blocked || live?.checks.some((c) => c.answeredAt === null)) && (
-          <AttentionPanel
-            timer={timer}
-            disabled={disabled}
-            act={(action, data) => void update(action, undefined, data)}
-          />
-        )}
+        {view !== 'Focus' && (blocked || pendingAttention) && attentionPanel}
+        {view === 'Activity Log' && <ActivityLog journal={journal} history={openHistory} />}
         {view === 'To-Dos' && (
           <Subjects
             journal={journal}
@@ -258,6 +272,29 @@ function Focus() {
               <h1 id="timer">Session timer</h1>
               {!fullscreen && overlay}
             </div>
+            <div className="day-control">
+              <span>
+                {openDay
+                  ? dayName(openDay, journal.days, Date.now()) + ' · ' + dayRange(openDay, Date.now())
+                  : 'No open Study Day'}
+              </span>
+              {openDay ? (
+                <button
+                  disabled={
+                    !!watch || Boolean(live?.interrupted) || busy || !journal.days.some((d) => !d.end)
+                  }
+                  onClick={() => {
+                    if (confirm('End this Study Day and save any current session?')) void update('done')
+                  }}
+                >
+                  Done for the Day
+                </button>
+              ) : (
+                <button disabled={disabled || !!current} onClick={() => void update('day-start')}>
+                  Start Day
+                </button>
+              )}
+            </div>
             <div className="chips timer-modes" role="group" aria-label="Timer mode">
               <button aria-pressed={!showWatch} disabled={!!watch} onClick={() => setWatchMode(false)}>
                 Pomodoro
@@ -270,8 +307,21 @@ function Focus() {
                 Stopwatch
               </button>
             </div>
+            {(live || watch || isBreak) && (
+              <small>
+                {watch
+                  ? 'Stop and save the stopwatch to switch to Pomodoro.'
+                  : live?.mode === 'focus'
+                    ? 'Save or discard this Pomodoro to switch to the stopwatch.'
+                    : 'Finish or skip the break to switch timers.'}
+              </small>
+            )}
             {showWatch ? (
               <StopwatchPanel
+                card={card}
+                fullscreen={fullscreen}
+                overlay={overlay}
+                toggleFullscreen={toggleFullscreen}
                 watch={watch}
                 received={timer?.received ?? 0}
                 journal={journal}
@@ -322,6 +372,7 @@ function Focus() {
                               : 'Ready'}
                       </span>
                     </div>
+                    {pendingAttention && attentionPanel}
                     <div
                       className="dial"
                       style={{ '--angle': fraction * 360 + 'deg' } as React.CSSProperties}
@@ -461,14 +512,23 @@ function Focus() {
                           verified focus.
                         </small>
                       )}
-                    {timer && (
-                      <AttentionPanel
-                        key={live?.id}
-                        timer={timer}
+                    {live?.mode === 'focus' && (
+                      <button
+                        className="discard"
                         disabled={disabled}
-                        act={(action, data) => void update(action, undefined, data)}
-                      />
+                        onClick={() => {
+                          if (
+                            confirm(
+                              'Discard this Pomodoro? Its elapsed time will not be saved as focus or earn rewards.',
+                            )
+                          )
+                            void update('discard', undefined, { blockId: live.id })
+                        }}
+                      >
+                        Cancel &amp; Discard
+                      </button>
                     )}
+                    {!pendingAttention && attentionPanel}
                   </section>
                   <div className="focus-preferences">
                     {timerSettings}
@@ -484,16 +544,6 @@ function Focus() {
               <h2>Recent sessions</h2>
               <SessionTable rows={timer?.history ?? []} days={journal.days} />
             </section>
-            <button
-              disabled={
-                !!watch || Boolean(live?.interrupted) || busy || !journal.days.some((d) => !d.end)
-              }
-              onClick={() => {
-                if (confirm('End this Study Day and save any current session?')) void update('done')
-              }}
-            >
-              Done for the Day
-            </button>
           </>
         )}
       </main>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   calendarBounds,
   timeRange,
@@ -11,6 +11,8 @@ import {
   type SessionInfo,
 } from './journal'
 import { StopwatchHistory } from './Stopwatch'
+import { DeleteEntry } from './DeleteEntry'
+import { shortDate, dayName, dayRange, recorded, accumulate, emptyRecorded } from './activityLog'
 import { report } from './accounting'
 import { Effort } from './Subjects'
 
@@ -42,11 +44,15 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
         <tbody>
           {rows.map((s) => (
             <tr key={s.id}>
-              <td>{new Date(s.startedAt).toLocaleDateString()}</td>
+              <td>{shortDate(localDate(s.startedAt))}</td>
               <td title={stamp(s.startedAt) + (s.endedAt ? ' – ' + stamp(s.endedAt) : '')}>
                 {timeRange(s.startedAt, s.endedAt)}
               </td>
-              <td>{days.find((d) => d.id === s.studyDayId)?.label ?? 'Unrecorded'}</td>
+              <td>
+                {s.studyDayId && days.find((d) => d.id === s.studyDayId)
+                  ? shortDate(days.find((d) => d.id === s.studyDayId)!.label)
+                  : '—'}
+              </td>
               <td>{s.subject}</td>
               <td>{s.title || '—'}</td>
               <td>{elapsed(s.plannedSeconds * 1000)}</td>
@@ -67,9 +73,20 @@ export function SessionTable({ rows, days }: { rows: Session[]; days: Day[] }) {
     </div>
   )
 }
-function Details({ s, journal, refresh }: { s: Session; journal: Journal; refresh: () => void }) {
+function Details({
+  s,
+  journal,
+  refresh,
+  entryId,
+}: {
+  s: Session
+  journal: Journal
+  refresh: () => void
+  entryId?: number
+}) {
   const [edit, setEdit] = useState<SessionInfo>()
   const [error, setError] = useState('')
+  const [activeSegment, inspect] = useState(0)
   const segments = s.intervals.flatMap((interval, n) => {
     const previous = n ? s.intervals[n - 1].end : s.startedAt
     const gap =
@@ -79,34 +96,41 @@ function Details({ s, journal, refresh }: { s: Session; journal: Journal; refres
     return [...gap, interval]
   })
   return (
-    <details className="panel">
+    <details className="panel" id={'entry-' + s.id} open={entryId === s.id || undefined}>
       <summary>
-        {stamp(s.startedAt)} · {s.subject} · {s.title || 'Untitled session'}
+        {shortDate(localDate(s.startedAt))} · {timeRange(s.startedAt, s.endedAt)} · {s.subject} ·{' '}
+        {s.title || 'Untitled session'}
       </summary>
       <p>
         {s.notes} {s.tags && ' · ' + s.tags}
       </p>
-      <p>Study Day · {journal.days.find((d) => d.id === s.studyDayId)?.label ?? 'Unrecorded'}</p>
-      <p>
-        {s.extensionSeconds > 0 && <>Added by choice · {elapsed(s.extensionSeconds * 1000)} · </>}
-        Effective target {s.effectiveMs >= s.targetSeconds * 1000 ? 'met' : 'not met'} · Make-up focus{' '}
-        {elapsed(
-          s.intervals
-            .filter((i) => i.makeup && i.category === 'focus')
-            .reduce((a, i) => a + i.end - i.start, 0),
-        )}
-      </p>
       <h3>Recorded intervals</h3>
-      <div className="timeline" aria-hidden="true">
+      <div className="timeline interactive-timeline" aria-label="Recorded session timeline">
         {segments.map((i, n) => (
-          <i
+          <button
             key={n}
-            title={i.category + ' · ' + elapsed(i.end - i.start)}
+            aria-label={
+              i.category + ' · ' + timeRange(i.start, i.end) + ' · ' + elapsed(i.end - i.start)
+            }
             data-kind={i.category}
             style={{ flexGrow: i.end - i.start }}
+            onFocus={() => inspect(n)}
+            onMouseEnter={() => inspect(n)}
+            onClick={() => inspect(n)}
           />
         ))}
       </div>
+      <div className="time-anchors">
+        <small>{time(s.startedAt)}</small>
+        <small>{time(s.endedAt ?? s.lastObservedAt)}</small>
+      </div>
+      {segments[activeSegment] && (
+        <p aria-live="polite">
+          {segments[activeSegment].category} ·{' '}
+          {timeRange(segments[activeSegment].start, segments[activeSegment].end)} ·{' '}
+          {elapsed(segments[activeSegment].end - segments[activeSegment].start)}
+        </p>
+      )}
       <div className="interval-key">
         {[...new Set(segments.map((i) => i.category))].map((k) => (
           <span key={k}>
@@ -116,12 +140,23 @@ function Details({ s, journal, refresh }: { s: Session; journal: Journal; refres
       </div>
       <details>
         <summary>Exact times and check-ins</summary>
+        <p>Study Day · {journal.days.find((d) => d.id === s.studyDayId)?.label ?? 'Unrecorded'}</p>
+        <p>
+          {s.extensionSeconds > 0 && <>Added by choice · {elapsed(s.extensionSeconds * 1000)} · </>}
+          Effective target {s.effectiveMs >= s.targetSeconds * 1000 ? 'met' : 'not met'} · Make-up focus{' '}
+          {elapsed(
+            s.intervals
+              .filter((i) => i.makeup && i.category === 'focus')
+              .reduce((a, i) => a + i.end - i.start, 0),
+          )}
+        </p>
+
         {s.intervals.map((i, n) => (
           <p key={n}>
             {stamp(i.start)} – {localDate(i.end) !== localDate(i.start) ? stamp(i.end) : time(i.end)} ·{' '}
             {i.makeup ? 'Make-up · ' : ''}
             {i.pause ? 'Pause · ' : ''}
-            {i.category} · {elapsed(i.end - i.start)} {i.reason}
+            {i.category} · {(i.end - i.start) / 1000} seconds {i.reason}
           </p>
         ))}
         {s.checks.map((c, n) => (
@@ -152,11 +187,13 @@ function Details({ s, journal, refresh }: { s: Session; journal: Journal; refres
               value={edit.subjectId}
               onChange={(e) => setEdit({ ...edit, subjectId: +e.target.value })}
             >
-              {journal.subjects.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name} · {v.kind}
-                </option>
-              ))}
+              {journal.subjects
+                .filter((v) => v.state === 'active' || v.id === s.subjectId)
+                .map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} · {v.kind}
+                  </option>
+                ))}
             </select>
           </label>
           {(['title', 'notes', 'tags'] as const).map((key) => (
@@ -179,12 +216,20 @@ function Details({ s, journal, refresh }: { s: Session; journal: Journal; refres
           Edit session
         </button>
       )}
+      <DeleteEntry id={s.id} refresh={refresh} />
       {error && <p role="alert">{error}</p>}
     </details>
   )
 }
 
-type Props = { journal: Journal; refresh: () => void; subject: number; setSubject: (id: number) => void }
+type Props = {
+  journal: Journal
+  refresh: () => void
+  subject: number
+  setSubject: (id: number) => void
+  openHistory: (id: number, entry?: number) => void
+  entryId?: number
+}
 function Filter({
   journal,
   subject,
@@ -196,16 +241,23 @@ function Filter({
       Subject
       <select value={subject} onChange={(e) => setSubject(+e.target.value)}>
         {allowAll && <option value={0}>All subjects</option>}
-        {journal.subjects.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name} · {s.kind}
-          </option>
-        ))}
+        <option value={-1}>Uncategorized</option>
+        {journal.subjects
+          .filter((s) => s.state !== 'deleted' || journal.sessions.some((b) => b.subjectId === s.id))
+          .map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} · {s.kind}
+            </option>
+          ))}
       </select>
     </label>
   )
 }
 export function History(props: Props) {
+  useEffect(() => {
+    if (props.entryId)
+      document.getElementById('entry-' + props.entryId)?.scrollIntoView({ block: 'center' })
+  }, [props.entryId, props.journal.sessions.length])
   const [date, setDate] = useState(''),
     [term, setTerm] = useState(''),
     [status, setStatus] = useState('')
@@ -214,11 +266,13 @@ export function History(props: Props) {
     (s) =>
       ['focus', 'stopwatch'].includes(s.mode) &&
       s.endedAt &&
-      (!props.subject || s.subjectId === props.subject) &&
+      (!props.subject || s.subjectId === Math.max(0, props.subject)) &&
       (!date || (s.startedAt < end && s.endedAt >= start)) &&
       (!status || s.status === status) &&
       [s.title, s.tags, s.notes, s.subject].join(' ').toLowerCase().includes(term.toLowerCase()),
   )
+  const sum = emptyRecorded()
+  for (const entry of rows) accumulate(sum, recorded(entry))
   return (
     <>
       <h1>Session history</h1>
@@ -245,8 +299,15 @@ export function History(props: Props) {
           </select>
         </label>
       </div>
+      {!!props.subject && (
+        <p className="panel">
+          {rows.length} linked entries · {elapsed(sum.focus)} focus · {elapsed(sum.distracted)}{' '}
+          distracted · {elapsed(sum.activity)} stopwatch
+        </p>
+      )}
       <SessionTable rows={rows.filter((s) => s.mode === 'focus')} days={props.journal.days} />
       <StopwatchHistory
+        entryId={props.entryId}
         entries={rows.filter((s) => s.mode === 'stopwatch')}
         journal={props.journal}
         refresh={props.refresh}
@@ -255,7 +316,13 @@ export function History(props: Props) {
       {rows
         .filter((s) => s.mode === 'focus')
         .map((s) => (
-          <Details key={s.id} s={s} journal={props.journal} refresh={props.refresh} />
+          <Details
+            key={s.id}
+            entryId={props.entryId}
+            s={s}
+            journal={props.journal}
+            refresh={props.refresh}
+          />
         ))}
     </>
   )
@@ -363,8 +430,8 @@ function Metrics({ data }: { data: ReturnType<typeof report> }) {
     [
       'Stopwatch',
       [
-        ['Stopwatch measured', elapsed(data.totals.stopwatch)],
-        ['Manually added', elapsed(data.manualMs)],
+        ['Stopwatch activity', elapsed(data.totals.stopwatch)],
+        ...(data.manualMs ? [['Previously added manually', elapsed(data.manualMs)] as const] : []),
       ],
     ],
   ] as const
@@ -376,7 +443,14 @@ function Metrics({ data }: { data: ReturnType<typeof report> }) {
           <dl>
             {items.map(([name, value]) => (
               <div key={name}>
-                <dt>{name}</dt>
+                <dt>
+                  {name === 'Pause time' ? (
+                    <span aria-hidden="true">Ⅱ </span>
+                  ) : name === 'Effective focus' ? (
+                    <span aria-hidden="true">◎ </span>
+                  ) : null}
+                  {name}
+                </dt>
                 <dd>{value}</dd>
               </div>
             ))}
@@ -388,7 +462,7 @@ function Metrics({ data }: { data: ReturnType<typeof report> }) {
 }
 export function Statistics(props: Props) {
   const { journal, subject } = props
-  const [mode, setMode] = useState('calendar'),
+  const [mode, setMode] = useState('study'),
     [date, setDate] = useState(localDate(Date.now())),
     [dayId, setDay] = useState(0)
   const day = journal.days.find((d) => d.id === dayId) ?? journal.days[0]
@@ -402,15 +476,20 @@ export function Statistics(props: Props) {
         : Math.min(Date.now() + 1, calendar[1])
   const selectedSubject = mode === 'subject' ? subject || journal.subjects[0]?.id || 1 : subject
   const data = report(journal, start, end, selectedSubject, mode === 'study' ? day?.id : 0)
-  const today = localDate(Date.now())
-  const showingToday = mode === 'calendar' && date === today && !subject
-  const todayData = showingToday ? data : report(journal, calendarBounds(today)[0], Date.now() + 1)
   const selected = journal.subjects.find((s) => s.id === selectedSubject)
   return (
     <>
       <h1>Statistics</h1>
-      <h2>Today</h2>
-      <Metrics data={todayData} />
+      <h2>
+        {mode === 'study' && day
+          ? dayName(day, journal.days, Date.now()) + ' · ' + dayRange(day, Date.now())
+          : mode === 'calendar'
+            ? shortDate(date)
+            : mode === 'subject'
+              ? (selected?.name ?? 'Uncategorized')
+              : 'Study Day'}
+      </h2>
+      <Metrics data={data} />
       <div className="panel fields">
         <label>
           Report
@@ -438,7 +517,8 @@ export function Statistics(props: Props) {
             <select value={day?.id ?? ''} onChange={(e) => setDay(+e.target.value)}>
               {journal.days.map((d) => (
                 <option value={d.id} key={d.id}>
-                  {d.label} · {time(d.start)} · {d.end ? 'closed' : 'open'} ({d.zone})
+                  {dayName(d, journal.days, Date.now())} · {dayRange(d, Date.now())} ·{' '}
+                  {d.end ? 'closed' : 'open'}
                 </option>
               ))}
             </select>
@@ -446,13 +526,17 @@ export function Statistics(props: Props) {
         )}
         <Filter {...props} subject={selectedSubject} allowAll={mode !== 'subject'} />
       </div>
-      {!showingToday && <Metrics data={data} />}
+
       {selected && <Effort subject={selected} journal={journal} />}
       <section className="panel">
-        <h2>Focus by subject</h2>
-        {Array.from(data.bySubject, ([id, ms]) => (
+        <h2>Recorded time by subject</h2>
+        {[...data.subjectTotals].map(([id, r]) => (
           <p key={id}>
-            {journal.subjects.find((s) => s.id === id)?.name} · {elapsed(ms)}
+            <button onClick={() => props.openHistory(id)}>
+              {journal.subjects.find((s) => s.id === id)?.name ?? 'Uncategorized'}
+            </button>{' '}
+            · {elapsed(r.focus)} focus · {elapsed(r.distracted)} distracted · {elapsed(r.activity)}{' '}
+            stopwatch
           </p>
         ))}
       </section>
@@ -467,7 +551,7 @@ export function Statistics(props: Props) {
           {data.timeline.map((s, i) => (
             <p key={i}>
               <b data-kind={s.category} />
-              {stamp(s.start)} – {time(s.end)} · {s.category}{' '}
+              {timeRange(s.start, s.end)} · {s.category}{' '}
               {s.label.toLowerCase() !== s.category && ' · ' + s.label} · {elapsed(s.end - s.start)}
             </p>
           ))}
@@ -486,7 +570,9 @@ export function Statistics(props: Props) {
       <StopwatchHistory entries={data.watches} journal={journal} refresh={props.refresh} />
       <SessionTable rows={data.sessions} days={journal.days} />
       {data.sessions.map((s) => (
-        <Details key={s.id} s={s} journal={journal} refresh={props.refresh} />
+        <button key={s.id} className="log-entry" onClick={() => props.openHistory(s.subjectId, s.id)}>
+          View timeline · {s.title || s.subject} · {shortDate(localDate(s.startedAt))}
+        </button>
       ))}
     </>
   )

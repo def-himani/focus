@@ -253,6 +253,74 @@ export function Subjects({ journal, refresh, onHistory }: Props) {
       setBusy(false)
     }
   }
+  function card(s: Subject) {
+    const protectedActivity =
+      s.id === 1 || (s.kind === 'activity' && s.name.toUpperCase() === 'GENERAL ACTIVITY')
+    return (
+      <article key={s.id} className="subject-row task-card">
+        {editing === s.id ? (
+          <SubjectForm
+            item={s}
+            kind={s.kind}
+            cancel={() => setEditing(undefined)}
+            saved={() => {
+              setEditing(undefined)
+              refresh()
+            }}
+          />
+        ) : (
+          <>
+            <div className="task-top">
+              {s.kind === 'todo' && s.state !== 'archived' && (
+                <input
+                  type="checkbox"
+                  aria-label={s.state === 'completed' ? 'Reopen' : 'Complete'}
+                  title={s.state === 'completed' ? 'Reopen' : 'Complete'}
+                  checked={s.state === 'completed'}
+                  disabled={busy}
+                  onChange={() => void setState(s, s.state === 'completed' ? 'active' : 'completed')}
+                />
+              )}
+              <strong>{s.name}</strong>
+              <button aria-label="Edit" title={'Edit ' + s.name} onClick={() => setEditing(s.id)}>
+                ✎
+              </button>
+              <details className="task-menu">
+                <summary aria-label={'Actions for ' + s.name} title="Actions">
+                  •••
+                </summary>
+                <div>
+                  <button onClick={() => onHistory(s.id)}>Sessions</button>
+                  {!protectedActivity && (
+                    <>
+                      <button
+                        disabled={busy}
+                        onClick={() => void setState(s, s.state === 'archived' ? 'active' : 'archived')}
+                      >
+                        {s.state === 'archived' ? 'Restore' : 'Archive'}
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          if (confirm('Delete ' + s.name + '? Saved sessions keep their original link.'))
+                            void setState(s, 'deleted')
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </div>
+              </details>
+            </div>
+            <Effort subject={s} journal={journal} />
+          </>
+        )}
+      </article>
+    )
+  }
+  const group = (kind: Subject['kind'], state: string) =>
+    journal.subjects.filter((s) => s.kind === kind && s.state === state).map(card)
   return (
     <>
       <h1>To-Dos</h1>
@@ -260,65 +328,27 @@ export function Subjects({ journal, refresh, onHistory }: Props) {
         <SubjectForm kind="todo" saved={refresh} />
       </section>
       {error && <p role="alert">{error}</p>}
-      {['Active to-dos', 'Completed to-dos', 'Activities'].map((heading, index) => (
-        <section key={heading} className="panel">
-          <h2>{heading}</h2>
-          {index === 2 && <SubjectForm kind="activity" saved={refresh} />}
-          {journal.subjects
-            .filter((s) =>
-              index === 2
-                ? s.kind === 'activity'
-                : s.kind === 'todo' && s.state === (index ? 'completed' : 'active'),
-            )
-            .map((s) => (
-              <div className="subject-row" key={s.id}>
-                {editing === s.id ? (
-                  <SubjectForm
-                    item={s}
-                    kind={s.kind}
-                    cancel={() => setEditing(undefined)}
-                    saved={() => {
-                      setEditing(undefined)
-                      refresh()
-                    }}
-                  />
-                ) : (
-                  <>
-                    <div>
-                      <strong>{s.name}</strong>
-                      <Effort subject={s} journal={journal} />
-                    </div>
-                    <div className="chips">
-                      <button onClick={() => onHistory(s.id)}>Sessions</button>
-                      <button onClick={() => setEditing(s.id)}>Edit</button>
-                      {s.kind === 'todo' && (
-                        <>
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              void setState(s, s.state === 'completed' ? 'active' : 'completed')
-                            }
-                          >
-                            {s.state === 'completed' ? 'Reopen' : 'Complete'}
-                          </button>
-                          <button
-                            disabled={busy}
-                            onClick={() => {
-                              if (confirm('Archive this to-do and keep its history?'))
-                                void setState(s, 'archived')
-                            }}
-                          >
-                            Archive
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
+      <div className="task-columns">
+        <section>
+          <h2>Active to-dos</h2>
+          <div className="task-grid">{group('todo', 'active')}</div>
         </section>
-      ))}
+        <section>
+          <h2>Completed to-dos</h2>
+          <div className="task-grid">{group('todo', 'completed')}</div>
+        </section>
+      </div>
+      <section className="panel">
+        <h2>Activities</h2>
+        <SubjectForm kind="activity" saved={refresh} />
+        <div className="task-grid">{group('activity', 'active')}</div>
+      </section>
+      <details className="panel">
+        <summary>Archived to-dos and activities</summary>
+        <div className="task-grid">
+          {journal.subjects.filter((s) => s.state === 'archived').map(card)}
+        </div>
+      </details>
     </>
   )
 }

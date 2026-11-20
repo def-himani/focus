@@ -28,15 +28,15 @@ Open **http://127.0.0.1:5173**. “Connected to the local API” confirms the br
 
 ## Use the timer
 
-Start with General Study and the default 40-minute focus and 5-minute break, or select a preset or custom duration (minutes or mm:ss). Pause and resume preserve remaining time. Stop & save records a partial session. Reset also preserves elapsed work and returns to the idle focus timer.
+Start with General Study and the default 40-minute focus and 5-minute break, or select a preset or custom duration (minutes or mm:ss). Pause and resume preserve remaining time. Stop & save records a partial session. Reset also preserves elapsed work and returns to the idle focus timer. Choose **Cancel & Discard** and confirm to remove an unwanted Pomodoro, including its recorded time.
 
 Repeat, auto-start break, and auto-start next focus control transitions independently. Turn off repeat for a single cycle, or turn off both repeat and automatic breaks for focus only. Keep the app open for automatic transitions. After closing and reopening, resume from the last saved checkpoint. Recent sessions show local start and end times, the original plan, actual focus and pause time, and completion status.
 
 ## Stopwatch
 
-Select **Stopwatch** on the Focus screen to log an activity without choosing a duration or a task. Pause excludes time until you resume. A running stopwatch continues from its saved start time across a browser or API restart. Stop and save records the measured intervals immediately under General Activity. You can then choose a to-do, an existing or new activity, or Uncategorized and optionally add notes. History also lets you change the category and notes later.
+Select **Stopwatch** on the Focus screen to log an activity without choosing a duration or a task. Pause excludes time until you resume. A running stopwatch continues from its saved start time across a browser or API restart. Stop and save records the measured intervals immediately under General Activity. The optional form lets you enter distracted minutes, a title, notes and a category. Choose a to-do, an existing or new activity, or Uncategorized. You can revise these fields in History.
 
-Use **+30s** and **+1m** while timing, while paused, or on a saved entry. The adjustment history shows when each addition was recorded. The combined total includes manual time. Statistics assigns manual additions to the entry’s start date and shows measured time separately. A stopwatch entry earns no coins and contributes no verified Pomodoro focus or estimated task effort.
+For example, enter 5 distracted minutes after a 29-minute stopwatch to record 24 minutes of activity and 5 minutes of distraction. Leave the field blank to keep all 29 minutes as activity. Neither choice earns coins or advances verified task effort. The original timestamps, paused gaps and any manual additions saved by Milestone 8 survive the upgrade. Detailed Statistics still includes those historical additions.
 
 ## Attention, subjects, and reports
 
@@ -44,7 +44,13 @@ Choose an existing subject or type an activity name directly on Focus. Session t
 
 Set a check-in interval to enable attention prompts. The countdown keeps running during a prompt. On expiry, review any unverified running time before continuing. Report distraction during a run or classify an explicit pause. When the original countdown falls short of its effective target, choose make-up or finish. On reopening, the interrupted-session panel offers resume or save partial.
 
-Statistics opens on today's local calendar date. Choose another date, a logical Study Day, or a subject across all dates. Done for the Day saves the current block and closes the logical day. Any remaining unverified time can still be reviewed. Optional personal intervals and daily notes live in Statistics.
+**Start Day** opens a Study Day. Starting work also opens one automatically. An open day continues past midnight until you select **Done for the Day**. Closing it ends that day’s consecutive-session bonus and leaves gaps between sessions empty.
+
+**Activity Log** shows the week’s recorded work by task or activity. Switch to Monthly to browse by date. Both views group an overnight Study Day on the date it started. Entries without a Study Day use their local start date. Select a cell to see entries or select a subject to see its history across dates. Focus and Distracted percentages use only verified Pomodoro focus and explicitly recorded distraction, including stopwatch corrections. A dash means there is no classified time.
+
+**Statistics** opens on the current or latest Study Day. Choose a calendar date for a midnight-to-midnight breakdown, personal intervals and daily notes, or select a subject across dates. Expand a session in **History** to inspect its timeline using a pointer, touch or keyboard and see exact timestamps. To remove a mistaken entry, choose **Discard entry** and confirm. This removes it from reports and task progress and reverses its reward up to the available balance. Plants already purchased stay in the Garden.
+
+In **To-Dos**, use the pencil to edit a card in place and the checkbox to complete or reopen it. The three-dot menu opens linked sessions and offers Archive and Delete. Archived items can be restored from the list below Activities. Historical sessions retain their links after either action.
 
 ## Garden, quick start, and settings
 

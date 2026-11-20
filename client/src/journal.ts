@@ -61,9 +61,10 @@ export type Journal = {
 export const blank: Journal = { notes: [], subjects: [], sessions: [], days: [], personal: [] }
 
 export function elapsed(ms: number) {
-  const seconds = Math.floor(ms / 1000)
-  if (seconds >= 3600) return Math.floor(seconds / 3600) + 'h ' + Math.floor((seconds % 3600) / 60) + 'm'
-  return Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's'
+  if (ms > 0 && ms < 60000) return 'under 1 min'
+  const min = Math.floor(ms / 60000)
+  if (min >= 60) return Math.floor(min / 60) + 'h' + (min % 60 ? ' ' + (min % 60) + 'm' : '')
+  return min + ' min'
 }
 export function localDate(ms: number) {
   const d = new Date(ms)
@@ -77,7 +78,14 @@ export function timeRange(start: number, end: number | null) {
   const clock = (ms: number) =>
     new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   if (end === null) return clock(start) + ' – ongoing'
-  const date = localDate(start) !== localDate(end) ? new Date(end).toLocaleDateString() + ' ' : ''
+  const date =
+    localDate(start) !== localDate(end)
+      ? new Date(end).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: new Date(start).getFullYear() === new Date(end).getFullYear() ? undefined : 'numeric',
+        }) + ' '
+      : ''
   return clock(start) + ' – ' + date + clock(end)
 }
 export function addedSeconds(entry: Session) {

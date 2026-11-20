@@ -1,4 +1,5 @@
 using Focus.Api.Timers;
+using Focus.Api.Garden;
 using Microsoft.EntityFrameworkCore;
 
 namespace Focus.Api.Data;
@@ -10,6 +11,25 @@ public static class Journal
 {
     public static IQueryable<TimerBlock> Detailed(FocusDbContext db) => db.Blocks
         .Include(b => b.StudyDay).Include(b => b.Subject).Include(b => b.Intervals).Include(b => b.Checks).Include(b => b.Adjustments).AsSplitQuery();
+
+    private record Span(long Start, long End, string Category, bool Pause, bool Makeup, string Reason);
+    // Allocate a stopwatch estimate to the latest measured time, skipping all paused gaps.
+    private static IEnumerable<Span> Spans(TimerBlock b, long at)
+    {
+        var activityLeft = b.RunningMs(at) - b.StopwatchOffMs;
+        foreach (var i in b.Intervals.OrderBy(i => i.Start).ThenBy(i => i.Id))
+        {
+            var end = i.End ?? at;
+            if (b.Mode == "stopwatch" && b.StopwatchOffMs > 0)
+            {
+                var split = i.Start + Math.Min(activityLeft, end - i.Start);
+                activityLeft -= split - i.Start;
+                if (split > i.Start) yield return new(i.Start, split, "stopwatch", false, false, "");
+                if (end > split) yield return new(split, end, "off-task", false, false, "Stopwatch correction");
+            }
+            else yield return new(i.Start, end, i.Accounting(b.Mode), i.Kind == "pause", i.Makeup, i.Reason);
+        }
+    }
 
     public static object Row(TimerBlock b) => RowAt(b, b.EndedAt ?? b.LastObservedAt);
 
@@ -38,12 +58,11 @@ public static class Journal
             b.MakeupTargetMs,
             b.Interrupted,
             effectiveMs = Attention.Total(b, "focus", at),
-            offMs = Attention.Total(b, "off-task", at),
+            offMs = b.Mode == "stopwatch" ? b.StopwatchOffMs : Attention.Total(b, "off-task", at),
             unverifiedMs = Attention.Total(b, "unverified", at),
             pausedMs = b.Intervals.Where(i => i.Kind == "pause").Sum(i => i.Duration(at)),
             pauseCount = b.Intervals.Count(i => i.Kind == "pause"),
-            intervals = b.Intervals.OrderBy(i => i.Start).Select(i => new
-            { i.Start, end = i.End ?? at, category = i.Accounting(b.Mode), pause = i.Kind == "pause", i.Makeup, i.Reason }),
+            intervals = Spans(b, at),
             checks = b.Checks.OrderBy(c => c.ScheduledAt).Select(c => new { c.ScheduledAt, c.Boundary, c.AnsweredAt, c.Answer })
         };
     }
@@ -55,19 +74,23 @@ public static class Journal
         return text;
     }
 
-    public static async Task<Subject> Resolve(FocusDbContext db, SessionInfo info, bool historical = false)
+    public static async Task<Subject> Resolve(FocusDbContext db, SessionInfo info, int? retainedSubjectId = null)
     {
         if (info.SubjectId is { } id)
         {
             var subject = await db.Subjects.FindAsync(id) ?? throw new InputError("Unknown subject.");
-            if (!historical && subject.State != "active") throw new InputError("Choose an active subject.");
+            if (subject.Id != retainedSubjectId && subject.State != "active") throw new InputError("Choose an active subject.");
             return subject;
         }
         var name = Text(info.Activity, 200);
         if (name.Length == 0) return await db.Subjects.FirstAsync(s => s.Id == 1);
         var key = name.ToUpperInvariant();
-        var existing = await db.Subjects.FirstOrDefaultAsync(s => s.Kind == "activity" && s.NormalizedName == key);
-        if (existing != null) return existing;
+        var existing = await db.Subjects.FirstOrDefaultAsync(s => s.Kind == "activity" && s.State != "deleted" && s.NormalizedName == key);
+        if (existing != null)
+        {
+            if (existing.Id != retainedSubjectId && existing.State != "active") throw new InputError("Restore the archived activity or choose another name.");
+            return existing;
+        }
         var activity = new Subject { Name = name, NormalizedName = key };
         db.Subjects.Add(activity);
         await db.SaveChangesAsync();
@@ -86,8 +109,8 @@ public static class Journal
         using var tx = await db.Database.BeginTransactionAsync();
         var name = Text(edit.Name, 200);
         if (name.Length == 0 || edit.Kind is not ("todo" or "activity") ||
-            edit.State is not ("active" or "completed" or "archived") || edit.EstimateMinutes is <= 0 ||
-            edit.Kind == "activity" && (edit.EstimateMinutes != null || edit.State != "active"))
+            edit.State is not ("active" or "completed" or "archived" or "deleted") || edit.EstimateMinutes is <= 0 ||
+            edit.Kind == "activity" && (edit.EstimateMinutes != null || edit.State == "completed"))
             throw new InputError("Provide a name and a positive optional to-do estimate.");
         if (!id.HasValue && edit.CreationKey == null) throw new InputError("Missing creation key.");
         if (!id.HasValue && await db.Subjects.AnyAsync(s => s.CreationKey == edit.CreationKey))
@@ -95,8 +118,11 @@ public static class Journal
         var subject = id.HasValue ? await db.Subjects.FindAsync(id.Value) : new Subject { Kind = edit.Kind, CreationKey = edit.CreationKey };
         if (subject == null) return Results.NotFound();
         if (subject.Kind != edit.Kind) throw new InputError("Subject type cannot change.");
+        if (subject.State == "deleted") return Results.NotFound();
+        if (edit.State != "active" && (subject.Id == 1 || subject.Kind == "activity" && subject.NormalizedName == "GENERAL ACTIVITY"))
+            throw new InputError("Keep the default activity available for new sessions.");
         var key = name.ToUpperInvariant();
-        if (edit.Kind == "activity" && await db.Subjects.AnyAsync(s => s.Kind == "activity" && s.NormalizedName == key && s.Id != subject.Id))
+        if (edit.Kind == "activity" && await db.Subjects.AnyAsync(s => s.Kind == "activity" && s.State != "deleted" && s.NormalizedName == key && s.Id != subject.Id))
             throw new InputError("An activity already uses that name.");
         subject.Name = name;
         subject.NormalizedName = key;
@@ -131,7 +157,7 @@ public static class Journal
             using var tx = await db.Database.BeginTransactionAsync();
             var block = await db.Blocks.SingleOrDefaultAsync(b => b.Id == id && b.Mode == "focus");
             if (block == null) return Results.NotFound();
-            block.Subject = await Resolve(db, edit, true);
+            block.Subject = await Resolve(db, edit, block.SubjectId);
             Describe(block, edit);
             await db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -153,12 +179,32 @@ public static class Journal
         app.MapPut("/api/stopwatch/{id:int}", async (int id, SessionInfo edit, FocusDbContext db) =>
         {
             using var tx = await db.Database.BeginTransactionAsync();
-            var block = await db.Blocks.SingleOrDefaultAsync(b => b.Id == id && b.Mode == "stopwatch" && b.EndedAt != null);
+            var block = await db.Blocks.Include(b => b.Intervals).SingleOrDefaultAsync(b => b.Id == id && b.Mode == "stopwatch" && b.EndedAt != null);
             if (block == null) return Results.NotFound();
+            if (edit.StopwatchOffMs is long off)
+            {
+                if (off < 0 || off > block.RunningMs(block.EndedAt!.Value)) throw new InputError("Distracted time must fit within measured stopwatch time.");
+                block.StopwatchOffMs = off;
+            }
+            block.Title = Text(edit.Title, 300);
             block.Notes = Text(edit.Notes, 10000);
             block.Subject = edit.SubjectId != null || !string.IsNullOrWhiteSpace(edit.Activity)
-                ? await Resolve(db, edit, true) : null;
+                ? await Resolve(db, edit, block.SubjectId) : null;
             if (block.Subject == null) block.SubjectId = null;
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return Results.NoContent();
+        });
+        app.MapDelete("/api/sessions/{id:int}", async (int id, FocusDbContext db, TimeProvider clock, GardenService garden) =>
+        {
+            using var tx = await db.Database.BeginTransactionAsync();
+            var block = await db.Blocks.IgnoreQueryFilters().SingleOrDefaultAsync(b => b.Id == id);
+            if (block == null || block.Mode == "break") return Results.NotFound();
+            if (block.VoidedAt != null) return Results.NoContent();
+            if (block.EndedAt == null) throw new InputError("Stop or discard the active timer first.");
+            await garden.Reverse(id);
+            block.VoidedAt = clock.GetUtcNow().ToUnixTimeMilliseconds();
+            (await db.Settings.SingleAsync()).Revision++;
             await db.SaveChangesAsync();
             await tx.CommitAsync();
             return Results.NoContent();
@@ -185,7 +231,7 @@ public static class Journal
                 throw new InputError("Choose a label and a completed time range.");
             if (await db.PersonalIntervals.FindAsync(edit.Id) != null) return Results.NoContent();
             if (await db.PersonalIntervals.AnyAsync(i => i.Start < edit.End && i.End > edit.Start) ||
-                await db.Set<BlockInterval>().AnyAsync(i => i.Start < edit.End && (i.End ?? now) > edit.Start))
+                await db.Blocks.SelectMany(b => b.Intervals).AnyAsync(i => i.Start < edit.End && (i.End ?? now) > edit.Start))
                 throw new InputError("That range overlaps a recorded interval. Choose an uncovered range.");
             db.PersonalIntervals.Add(new() { Id = edit.Id, Start = edit.Start, End = edit.End, Label = label });
             await db.SaveChangesAsync();
