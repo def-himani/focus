@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ActivityLog } from './ActivityLog'
+import { ActivityLog } from './ActivityLogView'
 import { dayName, dayRange } from './activityLog'
 import { StopwatchPanel } from './Stopwatch'
 import { Garden } from './Garden'
